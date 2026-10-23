@@ -30,13 +30,22 @@ if (!animate) basic.showIcon(IconNames.No)
 // While nothing is connected, a single pixel races across the screen towards north.
 // It moves round a virtual 7x7 grid that wraps at its edges: the 5x5 screen (cells 1-5)
 // plus a hidden one-pixel border, so a pixel leaving the screen comes back in from the
-// opposite (south) side.
+// opposite (south) side, at a random spot across its direction of travel.
 // Positions are whole numbers in hundredths of a cell.
 let x = 300
 let y = 300
 let dx = 0
 let dy = -100
 let frame = 0
+let lastSpot = -1
+
+// The centre of a random screen cell (never the same one twice running), as a position.
+function randomSpot() {
+    let spot = randint(0, 4)
+    while (spot == lastSpot) spot = randint(0, 4)
+    lastSpot = spot
+    return (spot + 1) * 100 + 50
+}
 
 if (animate) basic.forever(function () {
     if (connected) return
@@ -48,8 +57,13 @@ if (animate) basic.forever(function () {
         dy = Math.round(-Math.cos(heading) * 100)
     }
     frame++
-    x = (x + dx + 700) % 700
-    y = (y + dy + 700) % 700
+    let nx = (x + dx + 700) % 700
+    let ny = (y + dy + 700) % 700
+    // A big jump means it just wrapped round through the hidden border.
+    if (Math.abs(ny - y) > 350) nx = randomSpot()
+    else if (Math.abs(nx - x) > 350) ny = randomSpot()
+    x = nx
+    y = ny
     basic.clearScreen()
     led.plot(Math.idiv(x, 100) - 1, Math.idiv(y, 100) - 1) // ignored while in the hidden border
     basic.pause(15)
