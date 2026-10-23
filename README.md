@@ -10,13 +10,16 @@ On first boot the micro:bit scrolls "TILT TO FILL SCREEN": tilt it until every L
 
 ## Viewing bearings
 
-`compass.html` (linked from the flasher page) uses Web Bluetooth to connect to any number of micro:bits and show each one's live bearing on a dial. Chrome can't scan in the background, so add each board through Chrome's device picker; boards already allowed reconnect automatically where Chrome supports `getDevices()`.
+`compass.html` (linked from the flasher page) uses Web Bluetooth to connect to any number of micro:bits and show each one's live bearing on a dial. Under each dial, a 5×5 grid of buttons draws on that board's LED screen, and a text box scrolls up to 20 characters across it. Chrome can't scan in the background, so add each board through Chrome's device picker; boards already allowed reconnect automatically where Chrome supports `getDevices()`.
 
 ## Bluetooth
 
 - Advertises as `BBC micro:bit [xxxxx]`; no pairing required (open link)
 - Magnetometer Service `E95DF2D8-251D-470A-A062-FA1922DFA9A8`
 - Bearing characteristic `E95D9715-251D-470A-A062-FA1922DFA9A8`: uint16 little-endian, degrees (0–359), read and notify
+- LED Service `E95DD91D-251D-470A-A062-FA1922DFA9A8`
+  - LED Matrix State `E95D7B77-251D-470A-A062-FA1922DFA9A8`: 5 bytes, one per row (top first), bit 4 = leftmost LED; read and write
+  - LED Text `E95D93EE-251D-470A-A062-FA1922DFA9A8`: write up to 20 bytes of text to scroll
 
 ## Building locally
 

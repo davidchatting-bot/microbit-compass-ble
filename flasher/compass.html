@@ -27,12 +27,20 @@
   .card .bearing { font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
   .card .state { color: var(--muted); font-size: .85rem; min-height: 1.3em; }
   .card.offline svg, .card.offline .bearing { opacity: .35; }
+  .screen { margin-top: 1rem; border-top: 1px solid var(--ring); padding-top: 1rem; }
+  .card.offline .screen { opacity: .35; pointer-events: none; }
+  .leds { display: grid; grid-template-columns: repeat(5, 1.75rem); gap: .35rem; justify-content: center; }
+  .leds button { width: 1.75rem; height: 1.75rem; padding: 0; border-radius: .3rem; background: var(--ring); }
+  .leds button[aria-pressed="true"] { background: var(--needle); box-shadow: 0 0 .5rem var(--needle); }
+  .screen form { display: flex; gap: .5rem; margin-top: .75rem; }
+  .screen input { flex: 1; min-width: 0; font: inherit; padding: .4rem .6rem; border: 1px solid var(--ring); border-radius: .4rem; background: var(--bg); color: var(--fg); }
+  .screen form button { padding: .4rem .8rem; }
 </style>
 </head>
 <body>
 <main>
   <h1>micro:bit Compasses</h1>
-  <p>Shows the live compass bearing of micro:bits running the <a href="./">Compass BLE</a> program. Click Add, pick a micro:bit from Chrome's list, and repeat for each board. Works in Chrome or Edge on desktop or Android.</p>
+  <p>Shows the live compass bearing of micro:bits running the <a href="./">Compass BLE</a> program. Click Add, pick a micro:bit from Chrome's list, and repeat for each board. Click the LEDs under a compass to draw on that board's screen, or send it text to scroll. Works in Chrome or Edge on desktop or Android.</p>
   <button id="add">Add micro:bit</button>
   <div id="status" role="status"></div>
   <div id="grid"></div>
@@ -54,12 +62,23 @@
     </svg>
     <div class="bearing">–</div>
     <div class="state"></div>
+    <div class="screen" hidden>
+      <div class="leds" role="group" aria-label="LED screen"></div>
+      <form>
+        <input name="text" maxlength="20" placeholder="Text to scroll" aria-label="Text to scroll">
+        <button>Send</button>
+      </form>
+      <button type="button" class="secondary clear">Clear screen</button>
+    </div>
   </div>
 </template>
 
 <script>
 const MAGNETOMETER_SERVICE = "e95df2d8-251d-470a-a062-fa1922dfa9a8";
 const BEARING_CHARACTERISTIC = "e95d9715-251d-470a-a062-fa1922dfa9a8";
+const LED_SERVICE = "e95dd91d-251d-470a-a062-fa1922dfa9a8";
+const LED_MATRIX_CHARACTERISTIC = "e95d7b77-251d-470a-a062-fa1922dfa9a8"; // 5 bytes, one per row, bit 4 = leftmost
+const LED_TEXT_CHARACTERISTIC = "e95d93ee-251d-470a-a062-fa1922dfa9a8"; // up to 20 bytes, scrolled
 
 const grid = document.getElementById("grid");
 const statusEl = document.getElementById("status");
@@ -82,13 +101,59 @@ function cardFor(device) {
     reconnect(device, card);
   };
   device.addEventListener("gattserverdisconnected", card.onDisconnect);
+  setUpScreen(card);
   cards.set(device.id, card);
   grid.append(card);
   return card;
 }
 
+function setUpScreen(card) {
+  const leds = card.querySelector(".leds");
+  for (let i = 0; i < 25; i++) {
+    const led = document.createElement("button");
+    led.setAttribute("aria-pressed", "false");
+    led.setAttribute("aria-label", `Row ${Math.floor(i / 5) + 1}, column ${(i % 5) + 1}`);
+    led.addEventListener("click", () => {
+      led.setAttribute("aria-pressed", led.getAttribute("aria-pressed") === "true" ? "false" : "true");
+      writeMatrix(card);
+    });
+    leds.append(led);
+  }
+  card.querySelector(".clear").addEventListener("click", () => {
+    for (const led of leds.children) led.setAttribute("aria-pressed", "false");
+    writeMatrix(card);
+  });
+  card.querySelector("form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const bytes = new TextEncoder().encode(e.target.text.value).slice(0, 20);
+    if (bytes.length) gattWrite(card, () => card.ledText.writeValueWithResponse(bytes));
+  });
+}
+
+function showMatrix(card, view) {
+  card.querySelectorAll(".leds button").forEach((led, i) => {
+    const on = (view.getUint8(Math.floor(i / 5)) >> (4 - (i % 5))) & 1;
+    led.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+}
+
+function writeMatrix(card) {
+  const rows = new Uint8Array(5);
+  card.querySelectorAll(".leds button").forEach((led, i) => {
+    if (led.getAttribute("aria-pressed") === "true") rows[Math.floor(i / 5)] |= 1 << (4 - (i % 5));
+  });
+  gattWrite(card, () => card.ledMatrix.writeValueWithResponse(rows));
+}
+
+// Web Bluetooth rejects overlapping GATT operations, so queue writes per board.
+function gattWrite(card, op) {
+  card.writes = (card.writes ?? Promise.resolve()).then(op).catch((e) => {
+    card.querySelector(".state").textContent = `Write failed: ${e.message}`;
+  });
+}
+
 function showBearing(card, degrees) {
-  // Rotate the dial, not the needle, by the shortest path so 359 -> 0 doesn't spin all the way round.
+  // Turn the needle by the shortest path so 359 -> 0 doesn't spin all the way round.
   const prev = card.angle ?? degrees;
   const delta = ((degrees - (prev % 360) + 540) % 360) - 180;
   card.angle = prev + delta;
@@ -108,6 +173,22 @@ async function connect(device) {
   await bearing.startNotifications();
   card.classList.remove("offline");
   state.textContent = "Connected";
+
+  // The screen is optional: older firmware lacks the LED service, and boards allowed
+  // before it was added need re-adding through the picker to grant access to it.
+  const screen = card.querySelector(".screen");
+  try {
+    const led = await server.getPrimaryService(LED_SERVICE);
+    card.ledMatrix = await led.getCharacteristic(LED_MATRIX_CHARACTERISTIC);
+    card.ledText = await led.getCharacteristic(LED_TEXT_CHARACTERISTIC);
+    showMatrix(card, await card.ledMatrix.readValue());
+    screen.hidden = false;
+  } catch (e) {
+    screen.hidden = true;
+    state.textContent = e.name === "SecurityError"
+      ? "Connected: remove (✕) and add it again to control the screen"
+      : "Connected: no LED service, reflash to control the screen";
+  }
 }
 
 async function reconnect(device, card) {
@@ -132,7 +213,7 @@ document.getElementById("add").addEventListener("click", async () => {
   try {
     device = await navigator.bluetooth.requestDevice({
       filters: [{ namePrefix: "BBC micro:bit" }],
-      optionalServices: [MAGNETOMETER_SERVICE],
+      optionalServices: [MAGNETOMETER_SERVICE, LED_SERVICE],
     });
   } catch (e) {
     if (e.name !== "NotFoundError") statusEl.textContent = e.message; // NotFoundError = picker cancelled
