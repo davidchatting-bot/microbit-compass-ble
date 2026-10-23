@@ -9,6 +9,9 @@ bluetooth.startMagnetometerService()
 bluetooth.startLEDService()
 
 let connected = false
+// The V1 runs out of memory (error 020) with the animation alongside Bluetooth, so it
+// shows a plain cross while waiting instead.
+const animate = control.hardwareVersion() != "1"
 
 bluetooth.onBluetoothConnected(function () {
     connected = true
@@ -16,25 +19,26 @@ bluetooth.onBluetoothConnected(function () {
 })
 bluetooth.onBluetoothDisconnected(function () {
     connected = false
+    if (!animate) basic.showIcon(IconNames.No)
 })
 
 // Reading the heading here triggers compass calibration (tilt to fill the screen)
 // on first boot, rather than waiting for the first BLE client.
 input.compassHeading()
+if (!animate) basic.showIcon(IconNames.No)
 
 // While nothing is connected, a single pixel races across the screen towards north.
 // It moves round a virtual 7x7 grid that wraps at its edges: the 5x5 screen (cells 1-5)
 // plus a hidden one-pixel border, so a pixel leaving the screen comes back in from the
 // opposite (south) side.
-// Positions are whole numbers in hundredths of a cell, and there is only one loop, to
-// keep memory use low enough for the micro:bit V1 alongside Bluetooth.
+// Positions are whole numbers in hundredths of a cell.
 let x = 300
 let y = 300
 let dx = 0
 let dy = -100
 let frame = 0
 
-basic.forever(function () {
+if (animate) basic.forever(function () {
     if (connected) return
     // The compass changes slowly, so only read it every 7th frame (about every 100 ms).
     if (frame % 7 == 0) {

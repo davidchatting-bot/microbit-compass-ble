@@ -6,7 +6,7 @@ A MakeCode program for the BBC micro:bit (V1 and V2) that exposes its compass be
 
 Open the flasher page (published by GitHub Pages from this repo) in Chrome or Edge, plug in a micro:bit over USB and click **Flash micro:bit**. Or download `binary.hex` from the page, or from the latest workflow run, and drag it onto the `MICROBIT` drive.
 
-On first boot the micro:bit scrolls "TILT TO FILL SCREEN": tilt it until every LED is lit to calibrate the compass. While waiting for a connection, a single pixel races across the screen towards north, wrapping round from the south side; it shows ✓ when connected.
+On first boot the micro:bit scrolls "TILT TO FILL SCREEN": tilt it until every LED is lit to calibrate the compass. While waiting for a connection, a V2 shows a single pixel racing across the screen towards north, wrapping round from the south side; a V1 (which runs out of memory with the animation alongside Bluetooth) shows ✗ instead. Both show ✓ when connected.
 
 ## Viewing bearings
 
