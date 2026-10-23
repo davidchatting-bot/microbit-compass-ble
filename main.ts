@@ -8,14 +8,18 @@
 bluetooth.startMagnetometerService()
 bluetooth.startLEDService()
 
+// The handlers only set a flag: anything that pauses (like showIcon) would make the
+// handler run in its own fiber, and on a V1 that extra memory at connection time
+// causes error 020. The main loop shows the tick instead.
 let connected = false
+let tickShown = false
 
 bluetooth.onBluetoothConnected(function () {
     connected = true
-    basic.showIcon(IconNames.Yes)
 })
 bluetooth.onBluetoothDisconnected(function () {
     connected = false
+    tickShown = false
 })
 
 // Reading the heading here triggers compass calibration (tilt to fill the screen)
@@ -43,7 +47,14 @@ function randomSpot() {
 }
 
 basic.forever(function () {
-    if (connected) return
+    if (connected) {
+        if (!tickShown) {
+            tickShown = true
+            basic.showIcon(IconNames.Yes)
+        }
+        basic.pause(100)
+        return
+    }
     // The compass changes slowly, so only read it every 5th frame (about every 110 ms).
     if (frame % 5 == 0) {
         const heading = input.compassHeading() * Math.PI / 180
