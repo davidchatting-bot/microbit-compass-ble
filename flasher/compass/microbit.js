@@ -1,15 +1,18 @@
 // Web Bluetooth connections to micro:bits running Compass BLE: each board's live bearing
-// from the Magnetometer Service's Bearing characteristic (uint16 LE, degrees).
+// from the Magnetometer Service's Bearing characteristic (uint16 LE, degrees), and its
+// A and B buttons from the Button Service (uint8: 0 released, 1 pressed, 2 long press).
 
 const MAGNETOMETER_SERVICE = "e95df2d8-251d-470a-a062-fa1922dfa9a8";
 const BEARING_CHARACTERISTIC = "e95d9715-251d-470a-a062-fa1922dfa9a8";
+const BUTTON_SERVICE = "e95d9882-251d-470a-a062-fa1922dfa9a8";
+const BUTTON_CHARACTERISTICS = { a: "e95dda90-251d-470a-a062-fa1922dfa9a8", b: "e95dda91-251d-470a-a062-fa1922dfa9a8" };
 
 const boards = new Map(); // device.id -> { device, name, bearing, state, pixel }
 
 function boardFor(device) {
   let board = boards.get(device.id);
   if (board) return board;
-  board = { device, name: device.name || "micro:bit", bearing: null, state: "Connecting…", pixel: null };
+  board = { device, name: device.name || "micro:bit", bearing: null, buttons: { a: 0, b: 0 }, state: "Connecting…", pixel: null };
   device.addEventListener("gattserverdisconnected", () => reconnect(board));
   boards.set(device.id, board);
   return board;
@@ -24,6 +27,20 @@ async function connect(board) {
   board.bearing = (await bearing.readValue()).getUint16(0, true);
   await bearing.startNotifications();
   board.state = "";
+
+  // Buttons are optional: older firmware lacks the service, and boards allowed before it
+  // was added need re-adding through the picker to grant access to it.
+  try {
+    const buttons = await server.getPrimaryService(BUTTON_SERVICE);
+    for (const [key, uuid] of Object.entries(BUTTON_CHARACTERISTICS)) {
+      const button = await buttons.getCharacteristic(uuid);
+      button.addEventListener("characteristicvaluechanged", (e) => (board.buttons[key] = e.target.value.getUint8(0)));
+      board.buttons[key] = (await button.readValue()).getUint8(0);
+      await button.startNotifications();
+    }
+  } catch {
+    board.buttons = null;
+  }
 }
 
 async function reconnect(board) {
@@ -46,7 +63,7 @@ async function addMicrobit() {
   try {
     device = await navigator.bluetooth.requestDevice({
       filters: [{ namePrefix: "BBC micro:bit" }],
-      optionalServices: [MAGNETOMETER_SERVICE],
+      optionalServices: [MAGNETOMETER_SERVICE, BUTTON_SERVICE],
     });
   } catch {
     return; // picker cancelled

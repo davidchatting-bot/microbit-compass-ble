@@ -1,12 +1,15 @@
-// Compass bearing and LED screen over BLE.
+// Compass bearing, LED screen and buttons over BLE.
 // Bearing characteristic E95D9715-251D-470A-A062-FA1922DFA9A8
 // in Magnetometer Service E95DF2D8-251D-470A-A062-FA1922DFA9A8 (uint16 LE, degrees, read/notify).
 // LED Service E95DD91D-251D-470A-A062-FA1922DFA9A8 lets a client set the screen:
 // LED Matrix State E95D7B77-... (5 bytes, one per row, bit 4 = leftmost) or scroll LED Text E95D93EE-....
+// Button Service E95D9882-251D-470A-A062-FA1922DFA9A8: Button A State E95DDA90-... and
+// Button B State E95DDA91-... (uint8: 0 released, 1 pressed, 2 long press; read/notify).
 // No pairing required ("open" link).
 
 bluetooth.startMagnetometerService()
 bluetooth.startLEDService()
+bluetooth.startButtonService()
 
 // The handlers only set a flag: anything that pauses (like showIcon) would make the
 // handler run in its own fiber, and on a V1 that extra memory at connection time

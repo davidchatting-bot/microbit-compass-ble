@@ -89,13 +89,14 @@ function draw() {
   drawScreen(phone, width / 2, top + (height - top - stripHeight) / 2 - 16, size, label, heading == null);
 
   // micro:bits in a row along the bottom.
-  const tile = min(stripHeight * 0.62, (width / max(list.length, 1)) * 0.7);
+  const tile = min(stripHeight * 0.62, (width / max(list.length, 1)) * 0.55) // room for the A/B buttons;
   list.forEach((board, i) => {
     const cx = (width / list.length) * (i + 0.5);
     const cy = height - stripHeight / 2 - 14;
     const status = board.state || (board.bearing == null ? "" : `${board.bearing}°`);
     board.bounds = [cx - tile / 2, cy - tile / 2, tile, tile];
     drawScreen(board.pixel, cx, cy, tile, `${shortName(board.name)}  ${status}`, !!board.state);
+    if (board.buttons) drawButtons(board.buttons, cx, cy, tile);
   });
 }
 
@@ -131,6 +132,21 @@ function drawScreen(pixel, cx, cy, size, label, dimmed) {
   textAlign(CENTER, TOP);
   textSize(constrain(size * 0.07, 12, 28));
   text(label, cx, cy + size / 2 + pitch * 0.5);
+}
+
+// The A and B buttons either side of a micro:bit screen, lit while pressed.
+function drawButtons(buttons, cx, cy, size) {
+  const r = size * 0.11;
+  const gap = size / 2 + size * 0.06 + r * 1.6;
+  [["A", buttons.a, cx - gap], ["B", buttons.b, cx + gap]].forEach(([label, state, x]) => {
+    noStroke();
+    fill(state ? LED_ON : BOARD);
+    circle(x, cy, r * 2);
+    fill(state ? "#fff" : TEXT);
+    textAlign(CENTER, CENTER);
+    textSize(r);
+    text(label, x, cy);
+  });
 }
 
 function shortName(name) {

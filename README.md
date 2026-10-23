@@ -12,7 +12,7 @@ On first boot the micro:bit scrolls "TILT TO FILL SCREEN": tilt it until every L
 
 `compass/` (linked from the flasher page) is a p5.js sketch laid out like a p5 web editor project (`index.html`, `style.css`, `sketch.js`, plus `microbit.js` for Bluetooth). It fills the screen with a micro:bit-style LED screen running the same animation as the firmware, steered by the compass of the phone or tablet it's running on. Tap **Start** to grant compass access (iOS asks; Android Chrome doesn't need to); on a device without a compass, drag to set north.
 
-**Add micro:bit** (Chrome or Edge with Web Bluetooth, including Android) connects to micro:bits running this firmware. Each appears as a smaller LED screen below, animated from its own live bearing; tap one to disconnect it. Chrome can't scan in the background, so add each board through Chrome's device picker; boards already allowed reconnect automatically where Chrome supports `getDevices()`. iOS browsers don't support Web Bluetooth, so on an iPhone the page shows the phone's own compass only.
+**Add micro:bit** (Chrome or Edge with Web Bluetooth, including Android) connects to micro:bits running this firmware. Each appears as a smaller LED screen below, animated from its own live bearing, with its A and B buttons either side lit while pressed; tap a screen to disconnect it. Boards allowed before the buttons were added need removing and re-adding to show them. Chrome can't scan in the background, so add each board through Chrome's device picker; boards already allowed reconnect automatically where Chrome supports `getDevices()`. iOS browsers don't support Web Bluetooth, so on an iPhone the page shows the phone's own compass only.
 
 The old `compass.html` address redirects to `compass/`.
 
@@ -24,6 +24,8 @@ The old `compass.html` address redirects to `compass/`.
 - LED Service `E95DD91D-251D-470A-A062-FA1922DFA9A8`
   - LED Matrix State `E95D7B77-251D-470A-A062-FA1922DFA9A8`: 5 bytes, one per row (top first), bit 4 = leftmost LED; read and write
   - LED Text `E95D93EE-251D-470A-A062-FA1922DFA9A8`: write up to 20 bytes of text to scroll
+- Button Service `E95D9882-251D-470A-A062-FA1922DFA9A8`
+  - Button A State `E95DDA90-251D-470A-A062-FA1922DFA9A8` and Button B State `E95DDA91-251D-470A-A062-FA1922DFA9A8`: uint8, 0 released, 1 pressed, 2 long press; read and notify
 
 ## Hardware notes
 
