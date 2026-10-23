@@ -33,7 +33,7 @@ Tested boards (board ID is the first four digits of `Unique ID` in the drive's `
 
 `binary.hex` is a universal hex holding both a V1 (DAL) and a V2 (CODAL) build; each board picks its own section.
 
-**V1 memory.** With Bluetooth running, the V1 has very little RAM left for the program, and running out shows a sad face followed by `020`. Builds that failed this way had two `forever` loops, or kept arrays of pixels and did floating-point maths every frame. The animation therefore uses a single `forever` loop and whole-number positions (hundredths of a cell), and only does floating-point maths when reading the compass every 5th frame. Keep new features to the same budget and test them on a V1.
+**V1 memory.** With Bluetooth running, the V1 has very little RAM left for the program, and running out shows a sad face followed by `020`. A build with two `forever` loops (one for the compass, one for the animation) failed this way. The animation therefore uses a single `forever` loop and whole-number positions (hundredths of a cell), and only does floating-point maths when reading the compass every 5th frame. Keep new features to the same budget and test them on a V1.
 
 **Bluetooth settings** (`pxt.json`). These match MakeCode's "No Pairing Required" option (`open: 1`, `whitelist: 0`, `security_level: null`). They also turn off the Event Service and Eddystone beacons (`event_service: 0`, `eddystone_url: 0`, `eddystone_uid: 0`) and set `gatt_table_size: 0x700`. Without these, a V1 with both the Magnetometer and LED services showed a blank screen or advertised no services. The DFU and Device Information services are still on, and are what to remove next if a V1 needs more memory.
 
