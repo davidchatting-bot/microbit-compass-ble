@@ -9,9 +9,6 @@ bluetooth.startMagnetometerService()
 bluetooth.startLEDService()
 
 let connected = false
-// The V1 runs out of memory (error 020) with the animation alongside Bluetooth, so it
-// shows a plain cross while waiting instead.
-const animate = control.hardwareVersion() != "1"
 
 bluetooth.onBluetoothConnected(function () {
     connected = true
@@ -19,13 +16,11 @@ bluetooth.onBluetoothConnected(function () {
 })
 bluetooth.onBluetoothDisconnected(function () {
     connected = false
-    if (!animate) basic.showIcon(IconNames.No)
 })
 
 // Reading the heading here triggers compass calibration (tilt to fill the screen)
 // on first boot, rather than waiting for the first BLE client.
 input.compassHeading()
-if (!animate) basic.showIcon(IconNames.No)
 
 // While nothing is connected, a single pixel races across the screen towards north.
 // It moves round a virtual 7x7 grid that wraps at its edges: the 5x5 screen (cells 1-5)
@@ -47,10 +42,10 @@ function randomSpot() {
     return (spot + 1) * 100 + 50
 }
 
-if (animate) basic.forever(function () {
+basic.forever(function () {
     if (connected) return
-    // The compass changes slowly, so only read it every 7th frame (about every 100 ms).
-    if (frame % 7 == 0) {
+    // The compass changes slowly, so only read it every 5th frame (about every 110 ms).
+    if (frame % 5 == 0) {
         const heading = input.compassHeading() * Math.PI / 180
         // North relative to the board, in screen coordinates (x right, y down).
         dx = Math.round(-Math.sin(heading) * 100)
@@ -66,5 +61,5 @@ if (animate) basic.forever(function () {
     y = ny
     basic.clearScreen()
     led.plot(Math.idiv(x, 100) - 1, Math.idiv(y, 100) - 1) // ignored while in the hidden border
-    basic.pause(15)
+    basic.pause(22)
 })
