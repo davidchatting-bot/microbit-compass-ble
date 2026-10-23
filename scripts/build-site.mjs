@@ -13,6 +13,7 @@ await build({
   outfile: "_site/flasher.js",
 });
 copyFileSync("flasher/index.html", "_site/index.html");
+copyFileSync("flasher/compass.html", "_site/compass.html");
 copyFileSync("built/binary.hex", "_site/binary.hex");
 
 let sha = process.env.GITHUB_SHA;

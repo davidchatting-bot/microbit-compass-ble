@@ -8,6 +8,10 @@ Open the flasher page (published by GitHub Pages from this repo) in Chrome or Ed
 
 On first boot the micro:bit scrolls "TILT TO FILL SCREEN": tilt it until every LED is lit to calibrate the compass. It shows ✗ while waiting for a connection and ✓ when connected.
 
+## Viewing bearings
+
+`compass.html` (linked from the flasher page) uses Web Bluetooth to connect to any number of micro:bits and show each one's live bearing on a dial. Chrome can't scan in the background, so add each board through Chrome's device picker; boards already allowed reconnect automatically where Chrome supports `getDevices()`.
+
 ## Bluetooth
 
 - Advertises as `BBC micro:bit [xxxxx]`; no pairing required (open link)
