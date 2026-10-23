@@ -1,0 +1,37 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #0b0b0d;
+  overflow: hidden;
+  touch-action: none;
+}
+
+canvas {
+  display: block;
+}
+
+.controls {
+  position: fixed;
+  top: max(16px, env(safe-area-inset-top));
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.controls button {
+  pointer-events: auto;
+  font: 600 16px/1 system-ui, sans-serif;
+  padding: 12px 20px;
+  border: 0;
+  border-radius: 999px;
+  background: #ff3b30;
+  color: #fff;
+  cursor: pointer;
+}
+
+.controls button.secondary {
+  background: #2a2a30;
+}

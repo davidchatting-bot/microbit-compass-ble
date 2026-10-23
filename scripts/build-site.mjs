@@ -1,6 +1,6 @@
 // Bundles the WebUSB flasher and copies in the freshly built hex: flasher/ + built/binary.hex -> _site/
 import { build } from "esbuild";
-import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 
 mkdirSync("_site", { recursive: true });
@@ -13,7 +13,8 @@ await build({
   outfile: "_site/flasher.js",
 });
 copyFileSync("flasher/index.html", "_site/index.html");
-copyFileSync("flasher/compass.html", "_site/compass.html");
+copyFileSync("flasher/compass.html", "_site/compass.html"); // redirects to compass/
+cpSync("flasher/compass", "_site/compass", { recursive: true });
 copyFileSync("built/binary.hex", "_site/binary.hex");
 
 let sha = process.env.GITHUB_SHA;

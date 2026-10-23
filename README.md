@@ -8,9 +8,13 @@ Open the flasher page (published by GitHub Pages from this repo) in Chrome or Ed
 
 On first boot the micro:bit scrolls "TILT TO FILL SCREEN": tilt it until every LED is lit to calibrate the compass. While waiting for a connection, a single pixel races across the screen towards north, wrapping round from the south side; it shows ✓ when connected.
 
-## Viewing bearings
+## Compass app
 
-`compass.html` (linked from the flasher page) uses Web Bluetooth to connect to any number of micro:bits and show each one's live bearing on a dial. Under each dial, a 5×5 grid of buttons draws on that board's LED screen, and a text box scrolls up to 20 characters across it (a single character is drawn still, using the micro:bit font, rather than scrolled). Chrome can't scan in the background, so add each board through Chrome's device picker; boards already allowed reconnect automatically where Chrome supports `getDevices()`.
+`compass/` (linked from the flasher page) is a p5.js sketch laid out like a p5 web editor project (`index.html`, `style.css`, `sketch.js`, plus `microbit.js` for Bluetooth). It fills the screen with a micro:bit-style LED screen running the same animation as the firmware, steered by the compass of the phone or tablet it's running on. Tap **Start** to grant compass access (iOS asks; Android Chrome doesn't need to); on a device without a compass, drag to set north.
+
+**Add micro:bit** (Chrome or Edge with Web Bluetooth, including Android) connects to micro:bits running this firmware. Each appears as a smaller LED screen below, animated from its own live bearing; tap one to disconnect it. Chrome can't scan in the background, so add each board through Chrome's device picker; boards already allowed reconnect automatically where Chrome supports `getDevices()`. iOS browsers don't support Web Bluetooth, so on an iPhone the page shows the phone's own compass only.
+
+The old `compass.html` address redirects to `compass/`.
 
 ## Bluetooth
 
@@ -41,7 +45,7 @@ DAPLink older than 0249 (like the V1.3's 0234) has no WebUSB, so the flasher pag
 
 **Compass.** `input.compassHeading()` is called once at boot so calibration ("TILT TO FILL SCREEN") happens before any client connects. The bearing service reads the compass itself; the animation reads it about every 110 ms. Magnets and nearby metal skew the reading.
 
-**Web Bluetooth with V1 on Android.** According to the `@microbit/microbit-connection` docs, the V1 firmware declares a display-only pairing capability even in open-link mode. So on Android, anything that asks to bond with a V1 may get a PIN prompt. The compass page doesn't bond, so it shouldn't hit this.
+**Web Bluetooth with V1 on Android.** According to the `@microbit/microbit-connection` docs, the V1 firmware declares a display-only pairing capability even in open-link mode. So on Android, anything that asks to bond with a V1 may get a PIN prompt. The compass app doesn't bond, so it shouldn't hit this.
 
 Built with pxt-microbit 9.1.1 and pxt-core 13.0.1.
 
