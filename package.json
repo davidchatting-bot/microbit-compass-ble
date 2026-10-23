@@ -1,0 +1,24 @@
+{
+  "name": "microbit-compass-ble",
+  "version": "1.0.0",
+  "description": "micro:bit V1/V2 program that exposes its compass bearing over BLE, plus a WebUSB flasher page",
+  "scripts": {
+    "postinstall": "node -e \"require('fs').writeFileSync('node_modules/pxtcli.json', JSON.stringify({targetdir: 'pxt-microbit'}))\"",
+    "build:hex": "pxt install && pxt build",
+    "build:site": "node scripts/build-site.mjs",
+    "build": "npm run build:hex && npm run build:site",
+    "serve": "npx --yes serve _site"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "pxt": "^0.5.1",
+    "pxt-microbit": "^9.1.1"
+  },
+  "devDependencies": {
+    "@microbit/microbit-connection": "^1.0.0",
+    "esbuild": "^0.28.2"
+  },
+  "private": true
+}

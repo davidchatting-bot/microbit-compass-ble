@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compass BLE Flasher</title>
+<style>
+  :root { --bg: #fff; --fg: #1b1b1f; --muted: #6b6b76; --accent: #2a6df4; --err: #c62828; --ok: #2e7d32; --track: #e6e6ea; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16161a; --fg: #ececf1; --muted: #9a9aa6; --accent: #6b9bff; --err: #ff6b6b; --ok: #6bd88a; --track: #2c2c33; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 34rem; margin: 0 auto; padding: 3rem 1rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .5rem; }
+  p { color: var(--muted); margin: 0 0 1.5rem; }
+  code { font-size: .85em; }
+  button { font: inherit; font-weight: 600; padding: .75rem 1.5rem; border: 0; border-radius: .5rem; background: var(--accent); color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  progress { width: 100%; height: .5rem; margin-top: 1.5rem; appearance: none; border: 0; border-radius: .25rem; background: var(--track); }
+  progress::-webkit-progress-bar { background: var(--track); border-radius: .25rem; }
+  progress::-webkit-progress-value { background: var(--accent); border-radius: .25rem; }
+  #status { margin-top: .75rem; min-height: 1.5em; }
+  #status.error { color: var(--err); }
+  #status.done { color: var(--ok); }
+  #build { margin-top: 3rem; font-size: .85rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Compass BLE</h1>
+  <p>Flashes a micro:bit (V1 or V2) so it shares its compass bearing over Bluetooth as characteristic <code>E95D9715-251D-470A-A062-FA1922DFA9A8</code>. Plug the micro:bit in over USB, then click Flash. Works in Chrome or Edge.</p>
+  <button id="flash" disabled>Flash micro:bit</button>
+  <progress id="progress" value="0" max="1" hidden></progress>
+  <div id="status" role="status"></div>
+  <p id="build"></p>
+</main>
+<script src="flasher.js"></script>
+</body>
+</html>

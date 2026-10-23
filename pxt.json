@@ -1,0 +1,26 @@
+{
+    "name": "compass-ble",
+    "version": "0.0.1",
+    "description": "Exposes the compass bearing over BLE via the micro:bit Magnetometer Service",
+    "dependencies": {
+        "core": "*",
+        "bluetooth": "*"
+    },
+    "files": [
+        "main.ts"
+    ],
+    "targetVersions": {
+        "target": "*"
+    },
+    "yotta": {
+        "config": {
+            "microbit-dal": {
+                "bluetooth": {
+                    "open": 1,
+                    "whitelist": 0,
+                    "security_level": "SECURITY_MODE_ENCRYPTION_OPEN_LINK"
+                }
+            }
+        }
+    }
+}
