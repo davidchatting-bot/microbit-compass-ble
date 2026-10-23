@@ -65,7 +65,7 @@
     <div class="screen" hidden>
       <div class="leds" role="group" aria-label="LED screen"></div>
       <form>
-        <input name="text" maxlength="20" placeholder="Text to scroll" aria-label="Text to scroll">
+        <input name="text" maxlength="20" placeholder="Text (1 character shows still)" aria-label="Text to show">
         <button>Send</button>
       </form>
       <button type="button" class="secondary clear">Clear screen</button>
@@ -79,6 +79,10 @@ const BEARING_CHARACTERISTIC = "e95d9715-251d-470a-a062-fa1922dfa9a8";
 const LED_SERVICE = "e95dd91d-251d-470a-a062-fa1922dfa9a8";
 const LED_MATRIX_CHARACTERISTIC = "e95d7b77-251d-470a-a062-fa1922dfa9a8"; // 5 bytes, one per row, bit 4 = leftmost
 const LED_TEXT_CHARACTERISTIC = "e95d93ee-251d-470a-a062-fa1922dfa9a8"; // up to 20 bytes, scrolled
+
+// micro:bit 5x5 font for ASCII 32-126 (from MakeCode), 5 rows per character in LED Matrix State format,
+// so a single character can be shown still instead of scrolled.
+const FONT = "000000000008080800080a0a0000000a1f0a1f0a0e190e130e19120409130c120c120d080800000004080808040804040408000a040a0000040e0400000000040800000e0000000000080001020408100c1212120c040c04040e1c020c101e1e0204120c060a121f021f101e011e02040e110e1f020408100e110e110e0e110e0408000800080000040004080204080402000e000e0008040204080e110600040e1115130c0c121e12121c121c121c0e1010100e1c1212121c1e101c101e1e101c10100e1013110e12121e12121c0808081c1f0202120c1214181412101010101e111b15111111191513110c1212120c1c121c10100c12120c061c121c12110e100c021c1f04040404121212120c1111110a041111151b1112120c1212110a0404041e0408101e0e0808080e10080402010e0202020e040a000000000000001f0804000000000e12120f10101c121c000e10100e02020e120e0c121c100e06081c08080e120e020c10101c12120800080808020002020c10141814120808080806001b151111001c121212000c12120c001c121c10000e120e02000e101010000608041808080e0807001212120f0011110a04001111151b00120c0c1200110a0418001e04081e06040c0406080808080818080c081800000c0300";
 
 const grid = document.getElementById("grid");
 const statusEl = document.getElementById("status");
@@ -125,7 +129,15 @@ function setUpScreen(card) {
   });
   card.querySelector("form").addEventListener("submit", (e) => {
     e.preventDefault();
-    const bytes = new TextEncoder().encode(e.target.text.value).slice(0, 20);
+    const text = e.target.text.value;
+    const code = text.charCodeAt(0);
+    if (text.length === 1 && code >= 32 && code <= 126) {
+      const rows = FONT.slice((code - 32) * 10, (code - 31) * 10).match(/../g).map((b) => parseInt(b, 16));
+      showMatrix(card, new DataView(new Uint8Array(rows).buffer));
+      writeMatrix(card);
+      return;
+    }
+    const bytes = new TextEncoder().encode(text).slice(0, 20);
     if (bytes.length) gattWrite(card, () => card.ledText.writeValueWithResponse(bytes));
   });
 }

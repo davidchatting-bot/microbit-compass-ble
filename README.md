@@ -10,7 +10,7 @@ On first boot the micro:bit scrolls "TILT TO FILL SCREEN": tilt it until every L
 
 ## Viewing bearings
 
-`compass.html` (linked from the flasher page) uses Web Bluetooth to connect to any number of micro:bits and show each one's live bearing on a dial. Under each dial, a 5×5 grid of buttons draws on that board's LED screen, and a text box scrolls up to 20 characters across it. Chrome can't scan in the background, so add each board through Chrome's device picker; boards already allowed reconnect automatically where Chrome supports `getDevices()`.
+`compass.html` (linked from the flasher page) uses Web Bluetooth to connect to any number of micro:bits and show each one's live bearing on a dial. Under each dial, a 5×5 grid of buttons draws on that board's LED screen, and a text box scrolls up to 20 characters across it (a single character is drawn still, using the micro:bit font, rather than scrolled). Chrome can't scan in the background, so add each board through Chrome's device picker; boards already allowed reconnect automatically where Chrome supports `getDevices()`.
 
 ## Bluetooth
 
