@@ -26,25 +26,27 @@ input.compassHeading()
 // It moves round a virtual 7x7 grid that wraps at its edges: the 5x5 screen (cells 1-5)
 // plus a hidden one-pixel border, so a pixel leaving the screen comes back in from the
 // opposite (south) side.
-let x = 3
-let y = 3
+// Positions are whole numbers in hundredths of a cell, and there is only one loop, to
+// keep memory use low enough for the micro:bit V1 alongside Bluetooth.
+let x = 300
+let y = 300
 let dx = 0
-let dy = -1
-
-// The compass changes slowly, so read it on its own loop rather than every frame.
-basic.forever(function () {
-    const heading = input.compassHeading() * Math.PI / 180
-    // North relative to the board, in screen coordinates (x right, y down).
-    dx = -Math.sin(heading)
-    dy = -Math.cos(heading)
-    basic.pause(100)
-})
+let dy = -100
+let frame = 0
 
 basic.forever(function () {
     if (connected) return
-    x = (x + dx + 7) % 7
-    y = (y + dy + 7) % 7
+    // The compass changes slowly, so only read it every 7th frame (about every 100 ms).
+    if (frame % 7 == 0) {
+        const heading = input.compassHeading() * Math.PI / 180
+        // North relative to the board, in screen coordinates (x right, y down).
+        dx = Math.round(-Math.sin(heading) * 100)
+        dy = Math.round(-Math.cos(heading) * 100)
+    }
+    frame++
+    x = (x + dx + 700) % 700
+    y = (y + dy + 700) % 700
     basic.clearScreen()
-    led.plot(Math.floor(x) - 1, Math.floor(y) - 1) // ignored while in the hidden border
+    led.plot(Math.idiv(x, 100) - 1, Math.idiv(y, 100) - 1) // ignored while in the hidden border
     basic.pause(15)
 })
