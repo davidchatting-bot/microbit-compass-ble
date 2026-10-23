@@ -29,7 +29,9 @@ Tested boards (board ID is the first four digits of `Unique ID` in the drive's `
 |---|---|---|---|---|
 | micro:bit V1.5 | 9901 | nRF51822, 16 KB RAM | 0249 | Works: compass, BLE, LED service and animation |
 | micro:bit V2.2 | 9904 | nRF52833, 128 KB RAM | 0255 | Works: compass, BLE, LED service and animation |
-| micro:bit V1.3 | 9900 | nRF51822, 16 KB RAM | | Not confirmed: earlier, heavier builds crashed with 020; the current build is untested on it |
+| micro:bit V1.3 | 9900 | nRF51822, 16 KB RAM | 0234 | Works: compass, BLE, LED service and animation (flashed by drag and drop) |
+
+DAPLink older than 0249 (like the V1.3's 0234) has no WebUSB, so the flasher page can't reach it: drag `binary.hex` onto the `MICROBIT` drive instead, or [update the interface firmware](https://microbit.org/get-started/user-guide/firmware/). Old DAPLink also writes `DETAILS.TXT` in an older format, without the `Unique ID` line; the board ID is still the first four digits of the USB serial number.
 
 `binary.hex` is a universal hex holding both a V1 (DAL) and a V2 (CODAL) build; each board picks its own section.
 
