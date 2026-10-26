@@ -1,6 +1,6 @@
 # micro:bit compass over BLE
 
-A MakeCode program for the BBC micro:bit (V1 and V2) that exposes its compass bearing over Bluetooth Low Energy, plus a one-click WebUSB flasher page.
+A [MakeCode](https://makecode.microbit.org) program for the BBC micro:bit (V1 and V2) that exposes its compass bearing over Bluetooth Low Energy, plus a one-click WebUSB flasher page.
 
 ## Flashing
 
