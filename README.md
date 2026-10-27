@@ -24,6 +24,20 @@ The old `compass.html` address redirects to `compass/`.
 
 `atoms3r/` is a PlatformIO project for the M5Stack AtomS3R that does the same: it advertises as `BBC micro:bit [atom]` with the Magnetometer and Button services (its one button, the screen, is button A; B is always released) and shows the racing pixel on a drawn 5x5 LED screen (✓ when connected). The bearing is tilt-compensated from the magnetometer and accelerometer, with a running min/max hard-iron calibration: after boot, turn it slowly through every direction. Build and flash with `pio run -t upload` from that folder.
 
+## Points North over BLE
+
+A Bluetooth version of [Points North](https://github.com/davidchatting/pointsnorth), for games around tables: each device shows a ring with every nearby device (its own at the bottom) drawn as an outline of its screen at its real-world position, found by comparing compass bearings. Instead of a WebSocket server and a QR-code session, every device nearby joins automatically: each one advertises and also connects to every other.
+
+- `ios/PointsNorth.swift`: a single-file SwiftUI app for iPhone and iPad, set up in Xcode like the iPhone app above. Tap a device to flash its screen; swipe left or right to flash the device next to you (as in the web version, swiping right messages the device on your left).
+- `atoms3r-pointsnorth/`: a PlatformIO project for the AtomS3R (NimBLE-Arduino). It has no touch screen, so click its button to message the device on your right, hold for your left. Its prebuilt Bluetooth controller has room for 4 links, two per device, so it plays with at most two others.
+
+Each device advertises the Magnetometer Service (so the compass page can add it too) and also has a Points North Service `00E43092-366D-46DA-8323-42BF39B7078E`:
+
+- Info `ECC93172-718C-4A86-8459-9CB1D893E71A`: 8-byte client ID, then uint16 little-endian screen width and height in points (about 1/160 inch); read and notify
+- Message `02BA1FE3-F825-486B-9B9B-417D31D6DEBC`: the sender's 8-byte client ID, then UTF-8 text; write
+
+Devices that advertise the Magnetometer Service without the Points North Service (like the iPhone app above) are ignored.
+
 ## Bluetooth
 
 - Advertises as `BBC micro:bit [xxxxx]`; no pairing required (open link)
