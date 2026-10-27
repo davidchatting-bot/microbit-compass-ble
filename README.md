@@ -20,6 +20,10 @@ The old `compass.html` address redirects to `compass/`.
 
 `ios/CompassBLE.swift` is a single-file SwiftUI app that does what the firmware does: it advertises the iPhone's compass bearing and on-screen A/B buttons over BLE with the same services, named `BBC micro:bit [iphone]`, and shows the same racing pixel (✓ when connected). To build it, make a new iOS App (SwiftUI) project in Xcode, replace its two Swift files with this one, and add "Privacy - Bluetooth Always Usage Description" in the target's Info tab. iOS only advertises while the app is open on screen. The compass app's picker also accepts any device advertising the Magnetometer Service, since Chrome may know the iPhone by its own name.
 
+## AtomS3R
+
+`atoms3r/` is a PlatformIO project for the M5Stack AtomS3R that does the same: it advertises as `BBC micro:bit [atom]` with the Magnetometer and Button services (its one button, the screen, is button A; B is always released) and shows the racing pixel on a drawn 5x5 LED screen (✓ when connected). The bearing is tilt-compensated from the magnetometer and accelerometer, with a running min/max hard-iron calibration: after boot, turn it slowly through every direction. Build and flash with `pio run -t upload` from that folder.
+
 ## Bluetooth
 
 - Advertises as `BBC micro:bit [xxxxx]`; no pairing required (open link)

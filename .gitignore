@@ -3,3 +3,4 @@ built/
 _site/
 pxt_modules/
 .pxt/
+.pio/
