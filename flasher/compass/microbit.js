@@ -62,7 +62,8 @@ async function addMicrobit() {
   let device;
   try {
     device = await navigator.bluetooth.requestDevice({
-      filters: [{ namePrefix: "BBC micro:bit" }],
+      // The iPhone app advertises the service, but Chrome may know it by the phone's own name.
+      filters: [{ namePrefix: "BBC micro:bit" }, { services: [MAGNETOMETER_SERVICE] }],
       optionalServices: [MAGNETOMETER_SERVICE, BUTTON_SERVICE],
     });
   } catch {
