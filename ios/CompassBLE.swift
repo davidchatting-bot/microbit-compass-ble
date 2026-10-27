@@ -1,4 +1,4 @@
-// Compass BLE for iPhone: does what the micro:bit firmware does. It advertises the phone's
+// Compass BLE for iPhone and iPad: does what the micro:bit firmware does. It advertises the device's
 // compass bearing and A/B buttons over BLE with the micro:bit's services, so the compass app
 // can add it like a micro:bit, and shows a single LED racing towards north (✓ once connected).
 //
@@ -19,7 +19,7 @@ let buttonService = CBUUID(string: "E95D9882-251D-470A-A062-FA1922DFA9A8")
 let buttonCharacteristics = [CBUUID(string: "E95DDA90-251D-470A-A062-FA1922DFA9A8"),
                              CBUUID(string: "E95DDA91-251D-470A-A062-FA1922DFA9A8")]
 // The compass app's device picker filters on the "BBC micro:bit" prefix.
-let advertisedName = "BBC micro:bit [iphone]"
+let advertisedName = UIDevice.current.userInterfaceIdiom == .pad ? "BBC micro:bit [ipad]" : "BBC micro:bit [iphone]"
 let longPressSeconds = 1.0
 
 // One byte per row (top first), bit 4 = leftmost LED, like the LED Matrix State.
@@ -39,6 +39,7 @@ final class Compass: NSObject, ObservableObject, CBPeripheralManagerDelegate, CL
     private var subscriptions = Set<String>() // "central/characteristic"
     private var longPresses: [DispatchWorkItem?] = [nil, nil]
     private var timer: Timer?
+    private var pending: [(CBMutableCharacteristic, Data)] = [] // notifications waiting for room
 
     // While nothing is connected, a single pixel races across the screen towards north.
     // It moves round a virtual 7x7 grid that wraps at its edges: the 5x5 screen (cells 1-5)
@@ -51,9 +52,21 @@ final class Compass: NSObject, ObservableObject, CBPeripheralManagerDelegate, CL
         super.init()
         peripheral = CBPeripheralManager(delegate: self, queue: nil)
         location.delegate = self
-        location.headingOrientation = .portrait
         location.startUpdatingHeading()
         timer = Timer.scheduledTimer(withTimeInterval: 0.022, repeats: true) { [weak self] _ in self?.step() }
+    }
+
+    // Measure the heading from the top of the screen as it's currently shown, so the bearing
+    // and the animation stay right when the screen rotates. (A device rotated to the right
+    // shows its interface rotated to the left, hence the swapped landscape cases.)
+    func updateOrientation() {
+        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+        switch scene?.interfaceOrientation {
+        case .portraitUpsideDown: location.headingOrientation = .portraitUpsideDown
+        case .landscapeLeft: location.headingOrientation = .landscapeRight
+        case .landscapeRight: location.headingOrientation = .landscapeLeft
+        default: location.headingOrientation = .portrait
+        }
     }
 
     // The centre of a random screen cell (never the same one twice running), as a position.
@@ -102,7 +115,7 @@ final class Compass: NSObject, ObservableObject, CBPeripheralManagerDelegate, CL
     private func setButton(_ i: Int, _ state: Int) {
         buttons[i] = state
         if i < buttonChars.count {
-            peripheral.updateValue(Data([UInt8(state)]), for: buttonChars[i], onSubscribedCentrals: nil)
+            notify(Data([UInt8(state)]), buttonChars[i])
         }
     }
 
@@ -113,7 +126,7 @@ final class Compass: NSObject, ObservableObject, CBPeripheralManagerDelegate, CL
         let value = Int(heading.magneticHeading.rounded()) % 360
         guard value != bearing else { return }
         bearing = value
-        if let bearingChar { peripheral.updateValue(uint16(value), for: bearingChar, onSubscribedCentrals: nil) }
+        if let bearingChar { notify(uint16(value), bearingChar) }
     }
 
     func locationManagerShouldDisplayHeadingCalibration(_ manager: CLLocationManager) -> Bool { true }
@@ -174,6 +187,23 @@ final class Compass: NSObject, ObservableObject, CBPeripheralManagerDelegate, CL
         peripheral.respond(to: request, withResult: .success)
     }
 
+    // iOS drops a notification when its send queue is full, which could lose a button
+    // release, so queue the latest value for each characteristic and send it when there's room.
+    private func notify(_ data: Data, _ characteristic: CBMutableCharacteristic) {
+        pending.removeAll { $0.0 === characteristic }
+        pending.append((characteristic, data))
+        sendPending()
+    }
+
+    private func sendPending() {
+        while let (characteristic, data) = pending.first {
+            guard peripheral.updateValue(data, for: characteristic, onSubscribedCentrals: nil) else { return }
+            pending.removeFirst()
+        }
+    }
+
+    func peripheralManagerIsReady(toUpdateSubscribers peripheral: CBPeripheralManager) { sendPending() }
+
     // iOS doesn't report connections, so "connected" means something is subscribed.
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didSubscribeTo characteristic: CBCharacteristic) {
         subscriptions.insert("\(central.identifier)/\(characteristic.uuid)")
@@ -232,7 +262,9 @@ struct ButtonView: View {
             .foregroundColor(state > 0 ? .white : textColor)
             .frame(width: 56, height: 56)
             .background(Circle().fill(state > 0 ? ledOn : boardColor))
-            .gesture(DragGesture(minimumDistance: 0).onChanged { _ in press() }.onEnded { _ in release() })
+            // Unlike a drag's onEnded, this also reports the touch ending when iOS cancels it.
+            .onLongPressGesture(minimumDuration: .infinity, maximumDistance: .infinity, perform: {},
+                                onPressingChanged: { pressing in pressing ? press() : release() })
     }
 }
 
@@ -240,10 +272,19 @@ struct ContentView: View {
     @StateObject private var compass = Compass()
 
     var body: some View {
+        GeometryReader { geometry in
+            content(screenSize: min((geometry.size.width - 160) / 1.12, geometry.size.height * 0.6)) // room for the buttons and the board edge
+                .onAppear { compass.updateOrientation() }
+                .onChange(of: geometry.size) { compass.updateOrientation() }
+        }
+    }
+
+    // The LED screen grows with the window, e.g. on an iPad.
+    private func content(screenSize: CGFloat) -> some View {
         VStack(spacing: 24) {
             HStack(spacing: 16) {
                 ButtonView(label: "A", state: compass.buttons[0], press: { compass.press(0) }, release: { compass.release(0) })
-                LedScreen(rows: compass.rows, size: 200)
+                LedScreen(rows: compass.rows, size: max(screenSize, 100))
                 ButtonView(label: "B", state: compass.buttons[1], press: { compass.press(1) }, release: { compass.release(1) })
             }
             Text(compass.bearing.map { "\($0)°" } ?? "Waiting for compass…")

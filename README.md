@@ -16,9 +16,9 @@ On first boot the micro:bit scrolls "TILT TO FILL SCREEN": tilt it until every L
 
 The old `compass.html` address redirects to `compass/`.
 
-## iPhone app
+## iPhone and iPad app
 
-`ios/CompassBLE.swift` is a single-file SwiftUI app that does what the firmware does: it advertises the iPhone's compass bearing and on-screen A/B buttons over BLE with the same services, named `BBC micro:bit [iphone]`, and shows the same racing pixel (✓ when connected). To build it, make a new iOS App (SwiftUI) project in Xcode, replace its two Swift files with this one, and add "Privacy - Bluetooth Always Usage Description" in the target's Info tab. iOS only advertises while the app is open on screen. The compass app's picker also accepts any device advertising the Magnetometer Service, since Chrome may know the iPhone by its own name.
+`ios/CompassBLE.swift` is a single-file SwiftUI app that does what the firmware does: it advertises the iPhone or iPad's compass bearing and on-screen A/B buttons over BLE with the same services, named `BBC micro:bit [iphone]` or `[ipad]`, measured from the top of the screen however it's rotated, and shows the same racing pixel (✓ when connected). To build it, make a new iOS App (SwiftUI) project in Xcode, replace its two Swift files with this one, and add "Privacy - Bluetooth Always Usage Description" in the target's Info tab. iOS only advertises while the app is open on screen. The compass app's picker also accepts any device advertising the Magnetometer Service, since Chrome may know the iPhone by its own name.
 
 ## AtomS3R
 
