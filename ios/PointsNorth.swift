@@ -10,6 +10,10 @@
 // advertising the Magnetometer Service that also has the Points North Service. Being nearby
 // takes the place of the web version's session and QR code.
 //
+// The AtomS3R version (atoms3r-pointsnorth/) can't use a link that another device opened to read
+// from it, as iOS does, so when this app connects to an Atom it writes its own details to the
+// Atom's Report characteristic, and listens on its Outbox for messages from the Atom.
+//
 // Setup as for CompassBLE.swift: an iOS App (SwiftUI) project with this as its only Swift file,
 // and "Privacy - Bluetooth Always Usage Description" in the target's Info tab.
 // iOS only advertises while the app is open on screen, so it keeps the screen awake.
@@ -27,6 +31,10 @@ let bearingCharacteristic = CBUUID(string: "E95D9715-251D-470A-A062-FA1922DFA9A8
 let pointsNorthService = CBUUID(string: "00E43092-366D-46DA-8323-42BF39B7078E")
 let infoCharacteristic = CBUUID(string: "ECC93172-718C-4A86-8459-9CB1D893E71A")
 let messageCharacteristic = CBUUID(string: "02BA1FE3-F825-486B-9B9B-417D31D6DEBC")
+// Only on Atoms: Report (write: our client ID, uint16 LE width, height and bearing) and Outbox
+// (notify: the target's 8-byte client ID, the sender's, then UTF-8 text).
+let reportCharacteristic = CBUUID(string: "80D91D31-5AEF-4697-B843-1C28EA1CB4ED")
+let outboxCharacteristic = CBUUID(string: "68CAAC8D-DF0B-4D7D-9AC5-7201064754FE")
 // The compass page's device picker filters on the "BBC micro:bit" prefix.
 let advertisedName = UIDevice.current.userInterfaceIdiom == .pad ? "BBC micro:bit [ipad]" : "BBC micro:bit [iphone]"
 
@@ -56,6 +64,7 @@ final class PointsNorth: NSObject, ObservableObject, CBPeripheralManagerDelegate
         var width = 100.0, height = 100.0
         var bearing: Int?
         var message: CBCharacteristic?
+        var report: CBCharacteristic?
         var ignored = false // no Points North Service, e.g. the CompassBLE app
     }
 
@@ -120,6 +129,7 @@ final class PointsNorth: NSObject, ObservableObject, CBPeripheralManagerDelegate
         size = newSize
         objectWillChange.send()
         if let infoChar { notify(infoData(), infoChar) }
+        sendReports()
     }
 
     private func infoData() -> Data {
@@ -132,6 +142,7 @@ final class PointsNorth: NSObject, ObservableObject, CBPeripheralManagerDelegate
         guard value != bearing else { return }
         bearing = value
         if let bearingChar { notify(uint16(value), bearingChar) }
+        sendReports()
     }
 
     func locationManagerShouldDisplayHeadingCalibration(_ manager: CLLocationManager) -> Bool { true }
@@ -256,6 +267,11 @@ final class PointsNorth: NSObject, ObservableObject, CBPeripheralManagerDelegate
                 peripheral.setNotifyValue(true, for: characteristic)
             case messageCharacteristic:
                 peers[peripheral.identifier]?.message = characteristic
+            case reportCharacteristic:
+                peers[peripheral.identifier]?.report = characteristic
+                sendReports()
+            case outboxCharacteristic:
+                peripheral.setNotifyValue(true, for: characteristic)
             default: break
             }
         }
@@ -270,6 +286,19 @@ final class PointsNorth: NSObject, ObservableObject, CBPeripheralManagerDelegate
             peers[id]?.clientId = String(decoding: data.prefix(8), as: UTF8.self)
             peers[id]?.width = Double(uint16(data, at: 8))
             peers[id]?.height = Double(uint16(data, at: 10))
+        } else if characteristic.uuid == outboxCharacteristic, data.count >= 16,
+                  String(decoding: data.prefix(8), as: UTF8.self) == clientId {
+            showMessage()
+        }
+    }
+
+    // Tell each Atom this device's details (iOS devices read them instead).
+    private func sendReports() {
+        let report = infoData() + uint16(bearing ?? 0)
+        for peer in peers.values {
+            if let characteristic = peer.report {
+                peer.peripheral.writeValue(report, for: characteristic, type: .withoutResponse)
+            }
         }
     }
 

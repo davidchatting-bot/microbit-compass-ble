@@ -26,17 +26,29 @@ The old `compass.html` address redirects to `compass/`.
 
 ## Points North over BLE
 
-A Bluetooth version of [Points North](https://github.com/davidchatting/pointsnorth), for games around tables: each device shows a ring with every nearby device (its own at the bottom) drawn as an outline of its screen at its real-world position, found by comparing compass bearings. Instead of a WebSocket server and a QR-code session, every device nearby joins automatically: each one advertises and also connects to every other.
+A Bluetooth version of [Points North](https://github.com/davidchatting/pointsnorth), for games around tables: each device shows a ring with every nearby device (its own at the bottom) drawn as an outline of its screen at its real-world position, found by comparing compass bearings. Instead of a WebSocket server and a QR-code session, every device nearby joins automatically: each one advertises, and connects to every other device it finds.
 
 - `ios/PointsNorth.swift`: a single-file SwiftUI app for iPhone and iPad, set up in Xcode like the iPhone app above. Tap a device to flash its screen; swipe left or right to flash the device next to you (as in the web version, swiping right messages the device on your left).
-- `atoms3r-pointsnorth/`: a PlatformIO project for the AtomS3R (NimBLE-Arduino). It has no touch screen, so click its button to message the device on your right, hold for your left. Its prebuilt Bluetooth controller has room for 4 links, two per device, so it plays with at most two others.
+- `atoms3r-pointsnorth/`: a PlatformIO project for the AtomS3R (NimBLE-Arduino 1.4). It has no touch screen, so click its button to message the device on your right, hold for your left. Its heading is smoothed (it settles in about a second) and only changes in steps of 2° or more. It uses M5Unified's magnetometer calibration, saved to flash once a minute when it changes: turn it slowly through every direction once, then leave it running for a minute.
+
+### Protocol
 
 Each device advertises the Magnetometer Service (so the compass page can add it too) and also has a Points North Service `00E43092-366D-46DA-8323-42BF39B7078E`:
 
 - Info `ECC93172-718C-4A86-8459-9CB1D893E71A`: 8-byte client ID, then uint16 little-endian screen width and height in points (about 1/160 inch); read and notify
 - Message `02BA1FE3-F825-486B-9B9B-417D31D6DEBC`: the sender's 8-byte client ID, then UTF-8 text; write
+- Report `80D91D31-5AEF-4697-B843-1C28EA1CB4ED` (Atom only): a connected device's 8-byte client ID, then uint16 little-endian width, height and bearing; write and write without response
+- Outbox `68CAAC8D-DF0B-4D7D-9AC5-7201064754FE` (Atom only): messages to connected devices, as the target's 8-byte client ID, the sender's, then UTF-8 text; notify
+
+A device reads each other device's Info and Bearing (and subscribes to them) and writes to its Message characteristic. Between two iOS devices this all goes over one link, which iOS shares in both directions. The Atom can't do that: its controller won't open a second link to a device that has already connected to it, and NimBLE can only act as a client over one link that another device opened. So a device that connects to an Atom also writes its own details to the Atom's Report characteristic whenever they change, and subscribes to its Outbox. The Atom only connects out to devices that haven't connected to it, such as another Atom.
 
 Devices that advertise the Magnetometer Service without the Points North Service (like the iPhone app above) are ignored.
+
+### Limits
+
+Every device holds one link to each of the others. The Atom's prebuilt controller has 6 Bluetooth slots; advertising and scanning take two, so it plays with at most four other devices. Apple doesn't publish a limit for iOS; developers commonly report around 8 to 10 links working reliably. Even so, a broadcast-only design, with no connections and data in the advertisements, would have no table-size limit. On iOS that data would have to fit in the advertised name.
+
+The Atom scans for 1 second every 5 seconds, listening 30 ms in every 160, and asks for 30–60 ms link intervals with a 5 s supervision timeout. It shares one radio between advertising, scanning and its links, and scanning more often starved them: phones dropped the link. A new device takes up to about 5 seconds to appear on the Atom.
 
 ## Bluetooth
 
