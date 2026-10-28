@@ -1,5 +1,5 @@
 // Compass bearing and button over BLE, speaking the same protocol as the micro:bit
-// Compass BLE firmware (github.com/davidchatting-bot/microbit-compass-ble), so its compass
+// Compass BLE firmware (github.com/davidchatting-bot/pointsnorth), so its compass
 // app can add this board too. The name starts "BBC micro:bit" because the app's device
 // picker filters on that prefix.
 #include <M5Unified.h>

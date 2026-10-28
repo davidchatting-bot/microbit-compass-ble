@@ -1,5 +1,5 @@
 // Points North for iPhone and iPad: github.com/davidchatting/pointsnorth as a native app, joining
-// the same sessions as the web app (flasher/pointsnorth/) through the same WebSocket relay.
+// the same sessions as the web app (web/) through the same WebSocket relay.
 // Every device round the table shows a ring with each device (its own at the bottom) drawn as
 // an outline of its screen at its real-world position, found by comparing compass bearings.
 // Tap a device to flash its screen; swipe left or right to flash the device next to you.
@@ -28,7 +28,7 @@ import CoreImage.CIFilterBuiltins
 import CoreLocation
 import SwiftUI
 
-let webApp = "https://davidchatting-bot.github.io/microbit-compass-ble/pointsnorth/"
+let webApp = "https://davidchatting-bot.github.io/pointsnorth/"
 let defaultServer = "wss://api.davidchatting.com/pubgames"
 
 // Points North Service: Session (read: the session ID, UTF-8).

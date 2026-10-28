@@ -1,22 +1,21 @@
-// Bundles the WebUSB flasher and copies in the freshly built hex: flasher/ + built/binary.hex -> _site/
+// Builds the GitHub Pages site from web/ -> _site/: Points North at the root, the micro:bit
+// flasher (bundled, with the freshly built hex) at flasher/, and the compass page at compass/.
 import { build } from "esbuild";
-import { copyFileSync, cpSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 
-mkdirSync("_site", { recursive: true });
+rmSync("_site", { recursive: true, force: true });
+mkdirSync("_site/flasher", { recursive: true });
+cpSync("web", "_site", { recursive: true, filter: (path) => !path.endsWith("flasher/flasher.js") });
 await build({
-  entryPoints: ["flasher/flasher.js"],
+  entryPoints: ["web/flasher/flasher.js"],
   bundle: true,
   minify: true,
   format: "iife",
   target: "es2020",
-  outfile: "_site/flasher.js",
+  outfile: "_site/flasher/flasher.js",
 });
-copyFileSync("flasher/index.html", "_site/index.html");
-copyFileSync("flasher/compass.html", "_site/compass.html"); // redirects to compass/
-cpSync("flasher/compass", "_site/compass", { recursive: true });
-cpSync("flasher/pointsnorth", "_site/pointsnorth", { recursive: true });
-copyFileSync("built/binary.hex", "_site/binary.hex");
+copyFileSync("built/binary.hex", "_site/flasher/binary.hex");
 
 let sha = process.env.GITHUB_SHA;
 try { sha ??= execSync("git rev-parse HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); } catch {}

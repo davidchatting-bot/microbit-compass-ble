@@ -1,7 +1,7 @@
 {
-  "name": "microbit-compass-ble",
+  "name": "pointsnorth",
   "version": "1.0.0",
-  "description": "micro:bit V1/V2 program that exposes its compass bearing over BLE, plus a WebUSB flasher page",
+  "description": "Points North for the web, iOS, the AtomS3R and micro:bits, plus the micro:bit firmware and its WebUSB flasher",
   "scripts": {
     "postinstall": "node -e \"require('fs').writeFileSync('node_modules/pxtcli.json', JSON.stringify({targetdir: 'pxt-microbit'}))\"",
     "build:hex": "pxt install && pxt build",

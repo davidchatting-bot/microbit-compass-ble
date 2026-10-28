@@ -32,7 +32,7 @@ const hexPromise = fetch("binary.hex").then((r) => {
   return r.text();
 });
 
-fetch("build.txt").then((r) => r.ok && r.text()).then((t) => {
+fetch("../build.txt").then((r) => r.ok && r.text()).then((t) => {
   if (t) document.getElementById("build").textContent = t;
 }).catch(() => {});
 

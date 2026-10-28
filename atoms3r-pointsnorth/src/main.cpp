@@ -1,5 +1,5 @@
 // Points North for the M5Stack AtomS3R: a spoke in the same sessions as the web app
-// (flasher/pointsnorth/) and the iOS app (ios/PointsNorth.swift), through the same WebSocket
+// (web/) and the iOS app (ios/PointsNorth.swift), through the same WebSocket
 // relay, over WiFi. The screen shows a ring with each device (this one at the bottom) drawn as
 // an outline of its screen at its real-world position, found by comparing compass bearings,
 // with hubs in the middle, and flashes white when another device messages it. The Atom has no
