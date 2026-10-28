@@ -17,7 +17,7 @@ Every device joins a session through the original's WebSocket relay (`wss://api.
 
 ## Playing
 
-The first device makes a session, shown as a QR code in the middle of its ring; scan it to join. Then:
+The first device makes a session, shown as a QR code in the middle of its ring (drawn the same on the web, iOS and Android: grey on the black background); scan it to join. Then:
 
 - **Tap** a device's outline to flash its screen (a micro:bit lights all its LEDs).
 - **Swipe** left or right to flash the device next to you on that side.
