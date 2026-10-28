@@ -587,20 +587,26 @@ function handleDeviceTap(x, y) {
 }
 
 function onSwipeLeft() {
-  appendConsole('↩️ Swipe left', getDeviceLeft());
+  const target = getDeviceLeft();
+  appendConsole('↩️ Swipe left', target);
+  // no neighbour: without a target the relay would send it to everyone
+  if (!target) return;
   send({
     type: 'message',
     text: 'Swiped!',
-    targetClientId: getDeviceLeft()
+    targetClientId: target
   });
 }
 
 function onSwipeRight() {
-  appendConsole('➡️ Swipe right', getDeviceRight());
+  const target = getDeviceRight();
+  appendConsole('➡️ Swipe right', target);
+  // no neighbour: without a target the relay would send it to everyone
+  if (!target) return;
   send({
     type: 'message',
     text: 'Swiped!',
-    targetClientId: getDeviceRight()
+    targetClientId: target
   });
 }
 
@@ -879,16 +885,12 @@ function isConnected(ws = websocket) {
  * Returns null if there are no devices.
  */
 function getDeviceIdOffset(startId = clientId, offset = 1) {
-  // hubs sit in the centre, not round the circle, so they have no neighbours
-  const ordered = devicesOrdered.filter(e => !isHub(e)).map(e => e.clientId);
-  if (ordered.length === 0) return null;
+  // only devices drawn round the circle: with a bearing, and not hubs, which sit in the centre
+  const ordered = devicesOrdered.filter(e => !isHub(e) && Number.isFinite(e.bearing)).map(e => e.clientId);
 
-  let startIndex = ordered.indexOf(startId);
-  if (startIndex === -1) {
-    // fallback to local client if startId not found, otherwise first device
-    startIndex = ordered.indexOf(clientId);
-    if (startIndex === -1) startIndex = 0;
-  }
+  // a device that isn't round the circle has no neighbours
+  const startIndex = ordered.indexOf(startId);
+  if (ordered.length < 2 || startIndex === -1) return null;
 
   const len = ordered.length;
   const target = ((startIndex + offset) % len + len) % len;
