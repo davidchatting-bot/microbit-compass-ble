@@ -13,7 +13,7 @@
 // in their messages ("role": "hub") and are drawn in the middle of the ring, not round it.
 //
 // Whether a hub or a spoke, the app advertises its session over Bluetooth, for devices without a
-// camera (the AtomS3R, atoms3r-pointsnorth/) to join: the name "PN <session ID>" and the Points
+// camera (the AtomS3R, atoms3r/) to join: the name "PN <session ID>" and the Points
 // North Service, whose Session characteristic holds the session ID as UTF-8.
 //
 // Setup: an iOS App (SwiftUI) project with this as its only Swift file, and in the target's Info

@@ -8,7 +8,7 @@ Every device joins a session through the original's WebSocket relay (`wss://api.
 |---|---|---|
 | Phone, tablet or laptop browser | `web/` | Over the internet, by scanning a session's QR code |
 | iPhone or iPad | `ios/PointsNorth.swift` | Over the internet, by scanning a QR code; as a **hub**, it also bridges micro:bits |
-| AtomS3R | `atoms3r-pointsnorth/` | Over WiFi, joining the session iOS apps nearby advertise over Bluetooth |
+| AtomS3R | `atoms3r/` | Over WiFi, joining the session iOS apps nearby advertise over Bluetooth |
 | micro:bit V1 or V2 | `main.ts` | Over Bluetooth, through an iOS hub |
 | The relay | `server/` | |
 
@@ -42,7 +42,7 @@ As a hub or a spoke, it advertises its session over Bluetooth for the Atom. iOS 
 
 ## AtomS3R
 
-`atoms3r-pointsnorth/` is a PlatformIO project for the M5Stack AtomS3R, a spoke over WiFi. Build and flash with `pio run -t upload` from that folder.
+`atoms3r/` is a PlatformIO project for the M5Stack AtomS3R, a spoke over WiFi. Build and flash with `pio run -t upload` from that folder.
 
 - **WiFi:** the first time it starts (or if you hold its button while it starts), it opens a WiFi network of its own, `PN-Atom-xxxx`, named on its screen: join it from a phone and pick your network in the page that opens.
 - **Session:** it has no camera, so it joins the session the iOS apps nearby advertise over Bluetooth, staying in its session while anything nearby still advertises it and otherwise moving to the strongest. Until then the middle of its ring says what it's waiting for (`WiFi`, `session?` or `server?`).
@@ -127,7 +127,6 @@ From before Points North, for the micro:bit firmware on its own:
 
 - **Compass page** (`web/compass/`, at [`/compass/`](https://davidchatting-bot.github.io/pointsnorth/compass/)): a p5.js sketch that fills the screen with a micro:bit-style LED screen running the firmware's animation, steered by the compass of the phone or tablet it's running on. Tap **Start** to grant compass access (iOS asks; Android Chrome doesn't need to); on a device without a compass, drag to set north. **Add micro:bit** (Chrome or Edge with Web Bluetooth, including Android) connects to micro:bits running the firmware: each appears as a smaller LED screen below, animated from its own live bearing, with its A and B buttons either side lit while pressed; tap a screen to disconnect it. Chrome can't scan in the background, so add each board through Chrome's device picker; boards already allowed reconnect automatically where Chrome supports `getDevices()`. iOS browsers don't support Web Bluetooth, so on an iPhone the page shows the phone's own compass only.
 - **`ios/CompassBLE.swift`**: a single-file SwiftUI app that makes an iPhone or iPad act like a micro:bit running the firmware. It advertises its compass bearing and on-screen A/B buttons with the same services, named `BBC micro:bit [iphone]` or `[ipad]`, measured from the top of the screen however it's rotated, and shows the same racing pixel. Set up in Xcode like the iOS app above, with just the Bluetooth key. The compass page's picker also accepts any device advertising the Magnetometer Service, since Chrome may know the iPhone by its own name.
-- **`atoms3r/`**: a PlatformIO project that makes an AtomS3R act like a micro:bit running the firmware. It advertises as `BBC micro:bit [atom]` with the Magnetometer and Button services (its one button, the screen, is button A; B is always released) and shows the racing pixel on a drawn 5x5 LED screen. Its bearing uses a running min/max hard-iron calibration: after boot, turn it slowly through every direction. Not to be confused with `atoms3r-pointsnorth/`.
 
 ## Building
 
@@ -137,7 +136,7 @@ npm run build   # main.ts -> built/binary.hex (MakeCode cloud compiler, needs in
 npm run serve   # WebUSB needs localhost or HTTPS
 ```
 
-Pushing to `main` runs the same build in GitHub Actions and deploys `_site/` to GitHub Pages: Points North at the root, the flasher at `flasher/` and the compass page at `compass/`. The iOS apps build in Xcode, the Atom projects with PlatformIO, and the relay needs only Node.
+Pushing to `main` runs the same build in GitHub Actions and deploys `_site/` to GitHub Pages: Points North at the root, the flasher at `flasher/` and the compass page at `compass/`. The iOS apps build in Xcode, the Atom project with PlatformIO, and the relay needs only Node.
 
 ## Credits
 
