@@ -295,7 +295,6 @@ final class PointsNorth: NSObject, ObservableObject, CBPeripheralManagerDelegate
     // MARK: Messages
 
     func send(_ text: String, to id: String, from relay: Relay? = nil) {
-        print("PN: \((relay ?? self.relay).clientId) sends \(text) to \(id)")
         (relay ?? self.relay).send(["type": "message", "text": text, "targetClientId": id])
     }
 
@@ -304,7 +303,6 @@ final class PointsNorth: NSObject, ObservableObject, CBPeripheralManagerDelegate
     // in the middle, so they have no neighbours.
     func neighbour(of id: String, offset: Int) -> String? {
         let ordered = devices.filter { $0.role != .hub }.sorted { $0.bearing! < $1.bearing! }
-        print("PN: neighbour \(offset) of \(id) in", ordered.map { "\($0.id)@\(Int($0.bearing!))" })
         guard ordered.count > 1, let i = ordered.firstIndex(where: { $0.id == id }) else { return nil }
         return ordered[((i + offset) % ordered.count + ordered.count) % ordered.count].id
     }
@@ -450,16 +448,13 @@ final class PointsNorth: NSObject, ObservableObject, CBPeripheralManagerDelegate
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        print("PN: \(peripheral.name ?? "?") services", (peripheral.services ?? []).map(\.uuid), error ?? "")
         for service in peripheral.services ?? [] { peripheral.discoverCharacteristics(nil, for: service) }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
-        print("PN: \(peripheral.name ?? "?") \(service.uuid) has", (service.characteristics ?? []).map(\.uuid), error ?? "")
         for characteristic in service.characteristics ?? [] {
             switch characteristic.uuid {
             case bearingCharacteristic, buttonACharacteristic, buttonBCharacteristic:
-                print("PN: \(bridges[peripheral.identifier]?.relay.clientId ?? "?") subscribing to \(characteristic.uuid)")
                 if characteristic.uuid == bearingCharacteristic { peripheral.readValue(for: characteristic) }
                 peripheral.setNotifyValue(true, for: characteristic)
             case ledMatrixCharacteristic:
@@ -472,9 +467,6 @@ final class PointsNorth: NSObject, ObservableObject, CBPeripheralManagerDelegate
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard let bridge = bridges[peripheral.identifier], let data = characteristic.value, !data.isEmpty else { return }
         let first = data[data.startIndex]
-        if characteristic.uuid != bearingCharacteristic {
-            print("PN: \(bridge.relay.clientId) button \(characteristic.uuid == buttonACharacteristic ? "A" : "B") = \(first)")
-        }
         switch characteristic.uuid {
         case bearingCharacteristic where data.count >= 2:
             bridge.bearing = Int(first) | Int(data[data.startIndex + 1]) << 8
