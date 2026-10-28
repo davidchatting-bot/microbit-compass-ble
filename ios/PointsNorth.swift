@@ -1,4 +1,4 @@
-// Points North for iPhone and iPad: github.com/davidchatting/pointsnorth as a native app, joining
+// Points North for iPhone and iPad: github.com/davidchatting/pointsnorth-old as a native app, joining
 // the same sessions as the web app (web/) through the same WebSocket relay.
 // Every device round the table shows a ring with each device (its own at the bottom) drawn as
 // an outline of its screen at its real-world position, found by comparing compass bearings.

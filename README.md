@@ -1,6 +1,6 @@
 # Points North
 
-[Points North](https://github.com/davidchatting/pointsnorth) is for games around tables: each device shows a ring with every device in its session (its own at the bottom) drawn as an outline of its screen at its real-world position, found by comparing compass bearings. This repo takes it beyond phones in a browser, to a native iOS app, the M5Stack AtomS3R and BBC micro:bits.
+[Points North](https://github.com/davidchatting/pointsnorth-old) is for games around tables: each device shows a ring with every device in its session (its own at the bottom) drawn as an outline of its screen at its real-world position, found by comparing compass bearings. This repo takes it beyond phones in a browser, to a native iOS app, the M5Stack AtomS3R and BBC micro:bits.
 
 Every device joins a session through the original's WebSocket relay (`wss://api.davidchatting.com/pubgames`). Devices that can't reach it themselves are bridged by one that can:
 
@@ -138,3 +138,11 @@ npm run serve   # WebUSB needs localhost or HTTPS
 ```
 
 Pushing to `main` runs the same build in GitHub Actions and deploys `_site/` to GitHub Pages: Points North at the root, the flasher at `flasher/` and the compass page at `compass/`. The iOS apps build in Xcode, the Atom projects with PlatformIO, and the relay needs only Node.
+
+## Credits
+
+Based on an idea co-developed with [Edward Jenkins](https://edjenkins.co.uk).
+
+## License
+
+This code is licensed under the [MIT License](LICENSE).
