@@ -113,10 +113,6 @@ A hub says so in its `client_info` and `compass` messages (`"role": "hub"`; ever
 
 The iOS app, as hub or spoke, advertises the name `PN <session ID>` with the Points North Service `00E43092-366D-46DA-8323-42BF39B7078E`, whose Session characteristic `7513CE11-F0CA-49FC-A8BF-E9D4F8021FA3` holds the session ID as UTF-8, in case a scanner doesn't get the name.
 
-## Known issues
-
-See the [issues](https://github.com/davidchatting-bot/pointsnorth/issues). If a micro:bit's buttons do nothing, it probably needs reflashing ([#2](https://github.com/davidchatting-bot/pointsnorth/issues/2)), and if it isn't drawn, its compass needs calibrating ([#3](https://github.com/davidchatting-bot/pointsnorth/issues/3)).
-
 ## Other tools
 
 From before Points North, for the micro:bit firmware on its own:
