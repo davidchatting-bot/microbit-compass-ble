@@ -650,17 +650,18 @@ struct ContentView: View {
             frame.stroke(path, with: .color(.white), lineWidth: 2)
         }
 
-        // The QR code for joining, on a hub's screen if there is one.
+        // The QR code for joining, on a hub's screen if there is one: upright, and as big as fits
+        // inside the hub's outline at its current angle.
         guard let qr = model.qrCode else { return }
-        var frame = context
         var side = ring.qrSize
         if let hub = devices.first(where: { $0.role == .hub }) {
-            frame.rotate(by: .degrees(ring.angle(of: hub)))
             let rect = ring.outline(of: hub).rect
-            side = min(rect.width, rect.height) * 0.7
+            let t = CGFloat(ring.angle(of: hub) * .pi / 180)
+            let turn: CGFloat = abs(cos(t)) + abs(sin(t))
+            side = min(rect.width, rect.height) * 0.8 / turn
         }
-        frame.draw(Image(decorative: qr, scale: 1).interpolation(.none),
-                   in: CGRect(x: -side / 2, y: -side / 2, width: side, height: side))
+        context.draw(Image(decorative: qr, scale: 1).interpolation(.none),
+                     in: CGRect(x: -side / 2, y: -side / 2, width: side, height: side))
     }
 
     // The other device whose outline is under a point, if any.
