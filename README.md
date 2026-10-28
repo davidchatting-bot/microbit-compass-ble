@@ -115,11 +115,7 @@ The iOS app, as hub or spoke, advertises the name `PN <session ID>` with the Poi
 
 ## Known issues
 
-- **A micro:bit's buttons need firmware from commit 49092e3 or later**, which added the Button Service. On an older micro:bit the hub never hears a press, and nothing says so. Reflash it from the flasher page, then turn Bluetooth off and on on the iPad so it doesn't keep the old list of services.
-- **A micro:bit whose compass isn't calibrated has no bearing**, so it's in the session but isn't drawn, and its buttons do nothing.
-- **The relay never pings its sockets**, so a socket left open by a killed or suspended app stays in its session. Because a micro:bit keeps its client ID each time it's bridged, a stale socket could take messages meant for it.
-- **The micro:bit V1.5 hangs on button presses while bridged**, showing two lit LEDs: [#1](https://github.com/davidchatting-bot/pointsnorth/issues/1).
-- After updating the web app, a phone may keep running its cached script until the tab is refreshed.
+See the [issues](https://github.com/davidchatting-bot/pointsnorth/issues). If a micro:bit's buttons do nothing, it probably needs reflashing ([#2](https://github.com/davidchatting-bot/pointsnorth/issues/2)), and if it isn't drawn, its compass needs calibrating ([#3](https://github.com/davidchatting-bot/pointsnorth/issues/3)).
 
 ## Other tools
 
