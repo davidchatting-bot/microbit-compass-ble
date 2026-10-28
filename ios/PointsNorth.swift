@@ -158,13 +158,38 @@ final class Relay: NSObject, URLSessionWebSocketDelegate {
 final class Bridge {
     let peripheral: CBPeripheral
     let relay: Relay
-    var bearing: Int?
-    var sentBearing: Int?
+    var bearing: Int? // as passed on to the session
     var leds: CBCharacteristic?
+    // The readings smoothed as a direction (so 359 to 0 doesn't swing round), settling in
+    // about a second, as on the Atom.
+    private var x = 0.0, y = 0.0
+    private var lastReading: Date?
+    private(set) var smoothed: Int?
 
     init(peripheral: CBPeripheral, relay: Relay) {
         self.peripheral = peripheral
         self.relay = relay
+    }
+
+    func add(_ reading: Int) {
+        let now = Date()
+        let angle = Double(reading) * .pi / 180
+        // Weighted by the time since the last reading, so it settles at the same rate however
+        // often the micro:bit sends them.
+        let weight = lastReading.map { 1 - exp(-now.timeIntervalSince($0) / 0.3) } ?? 1
+        lastReading = now
+        x += weight * (sin(angle) - x)
+        y += weight * (cos(angle) - y)
+        smoothed = (Int((atan2(x, y) * 180 / .pi).rounded()) + 360) % 360
+    }
+
+    // Pass the smoothed bearing on when it has moved by 2 degrees or more, so it doesn't flicker
+    // between two values.
+    func update() -> Bool {
+        guard let smoothed else { return false }
+        if let bearing, abs((smoothed - bearing + 540) % 360 - 180) < 2 { return false }
+        bearing = smoothed
+        return true
     }
 }
 
@@ -469,7 +494,7 @@ final class PointsNorth: NSObject, ObservableObject, CBPeripheralManagerDelegate
         let first = data[data.startIndex]
         switch characteristic.uuid {
         case bearingCharacteristic where data.count >= 2:
-            bridge.bearing = Int(first) | Int(data[data.startIndex + 1]) << 8
+            bridge.add(Int(first) | Int(data[data.startIndex + 1]) << 8)
         // A (on the left) messages the micro:bit's left neighbour, B its right, when pressed: the
         // same messages as swiping on a screen.
         case buttonACharacteristic where first == 1:
@@ -482,8 +507,7 @@ final class PointsNorth: NSObject, ObservableObject, CBPeripheralManagerDelegate
 
     // micro:bits notify their bearing every 20 ms, so pass changes on at most five times a second.
     private func sendBridgeBearings() {
-        for bridge in bridges.values where bridge.bearing != nil && bridge.bearing != bridge.sentBearing {
-            bridge.sentBearing = bridge.bearing
+        for bridge in bridges.values where bridge.update() {
             bridge.relay.send(bridge.relay.info().merging(["type": "compass"]) { $1 })
         }
     }
