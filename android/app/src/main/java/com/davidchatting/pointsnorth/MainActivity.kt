@@ -110,6 +110,8 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
+import com.google.zxing.WriterException
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import com.google.zxing.qrcode.QRCodeWriter
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -761,15 +763,21 @@ class Ring(width: Double, height: Double, val bearing: Double) {
     }
 }
 
-// The join link as a QR code: black on white, one pixel per module.
+// The join link as a QR code, as the web app draws it: grey (#999) on transparent, the lowest
+// error correction, a one-module margin, at least version 4, one pixel per module.
 private var qrCache: Pair<String, ImageBitmap>? = null
 
 fun qrCode(text: String): ImageBitmap {
     qrCache?.let { if (it.first == text) return it.second }
-    val matrix = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, 0, 0, mapOf(EncodeHintType.MARGIN to 1))
+    val hints = mapOf(EncodeHintType.MARGIN to 1, EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.L)
+    val matrix = try {
+        QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, 0, 0, hints + (EncodeHintType.QR_VERSION to 4))
+    } catch (e: WriterException) {
+        QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, 0, 0, hints) // too long for version 4
+    }
     val bitmap = Bitmap.createBitmap(matrix.width, matrix.height, Bitmap.Config.ARGB_8888)
     for (x in 0 until matrix.width) for (y in 0 until matrix.height) {
-        bitmap.setPixel(x, y, if (matrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+        bitmap.setPixel(x, y, if (matrix[x, y]) 0xFF999999.toInt() else android.graphics.Color.TRANSPARENT)
     }
     return bitmap.asImageBitmap().also { qrCache = text to it }
 }

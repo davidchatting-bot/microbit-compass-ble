@@ -238,13 +238,19 @@ final class PointsNorth: NSObject, ObservableObject, CBPeripheralManagerDelegate
         return url
     }
 
-    // The join link as a QR code: black on white, one pixel per module.
+    // The join link as a QR code, as the web app draws it: grey (#999) on transparent, the lowest
+    // error correction, a one-module margin, one pixel per module.
     var qrCode: CGImage? {
         let text = joinURL
         if let qr, qr.text == text { return qr.image }
         let filter = CIFilter.qrCodeGenerator()
         filter.message = Data(text.utf8)
-        guard let output = filter.outputImage,
+        filter.correctionLevel = "L"
+        let colours = CIFilter.falseColor()
+        colours.inputImage = filter.outputImage
+        colours.color0 = CIColor(red: 0.6, green: 0.6, blue: 0.6) // dark modules
+        colours.color1 = CIColor.clear                           // light ones
+        guard let output = colours.outputImage,
               let image = CIContext().createCGImage(output, from: output.extent) else { return nil }
         qr = (text, image)
         return image
