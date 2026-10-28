@@ -149,7 +149,8 @@ val CLIENT_CONFIGURATION: UUID = UUID.fromString("00002902-0000-1000-8000-00805F
 // A micro:bit's 52 × 42 mm board at roughly the scale of a phone's screen in dp.
 const val MICROBIT_WIDTH = 290.0
 const val MICROBIT_HEIGHT = 235.0
-// LED Matrix State rows (bit 4 = leftmost): all on for a flash, then the tick it shows when connected.
+// LED Matrix State rows (bit 4 = leftmost): all on for a flash, and the tick a bridged micro:bit
+// shows. The micro:bit leaves its screen to the hub once connected.
 val LEDS_ON = byteArrayOf(31, 31, 31, 31, 31)
 val LEDS_TICK = byteArrayOf(0, 1, 2, 20, 8)
 
@@ -623,7 +624,10 @@ class PointsNorth(private val context: Context) : SensorEventListener {
                             bridge.queue { subscribe(gatt, characteristic) }
                         }
                         BUTTON_A_CHARACTERISTIC, BUTTON_B_CHARACTERISTIC -> bridge.queue { subscribe(gatt, characteristic) }
-                        LED_MATRIX_CHARACTERISTIC -> bridge.leds = characteristic
+                        LED_MATRIX_CHARACTERISTIC -> {
+                            bridge.leds = characteristic
+                            bridge.queue { write(gatt, characteristic, LEDS_TICK) }
+                        }
                     }
                 }
             }

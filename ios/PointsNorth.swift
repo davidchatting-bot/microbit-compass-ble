@@ -44,7 +44,8 @@ let ledService = CBUUID(string: "E95DD91D-251D-470A-A062-FA1922DFA9A8")
 let ledMatrixCharacteristic = CBUUID(string: "E95D7B77-251D-470A-A062-FA1922DFA9A8")
 // A micro:bit's 52 × 42 mm board at roughly the scale of a phone's screen in points.
 let microbitSize = CGSize(width: 290, height: 235)
-// LED Matrix State rows (bit 4 = leftmost): all on for a flash, then the tick it shows when connected.
+// LED Matrix State rows (bit 4 = leftmost): all on for a flash, and the tick a bridged micro:bit
+// shows. The micro:bit leaves its screen to the hub once connected.
 let ledsOn = Data([31, 31, 31, 31, 31])
 let ledsTick = Data([0, 1, 2, 20, 8])
 
@@ -484,6 +485,7 @@ final class PointsNorth: NSObject, ObservableObject, CBPeripheralManagerDelegate
                 peripheral.setNotifyValue(true, for: characteristic)
             case ledMatrixCharacteristic:
                 bridges[peripheral.identifier]?.leds = characteristic
+                peripheral.writeValue(ledsTick, for: characteristic, type: .withResponse)
             default: break
             }
         }
