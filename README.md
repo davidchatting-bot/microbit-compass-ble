@@ -24,31 +24,27 @@ The old `compass.html` address redirects to `compass/`.
 
 `atoms3r/` is a PlatformIO project for the M5Stack AtomS3R that does the same: it advertises as `BBC micro:bit [atom]` with the Magnetometer and Button services (its one button, the screen, is button A; B is always released) and shows the racing pixel on a drawn 5x5 LED screen (✓ when connected). The bearing is tilt-compensated from the magnetometer and accelerometer, with a running min/max hard-iron calibration: after boot, turn it slowly through every direction. Build and flash with `pio run -t upload` from that folder.
 
-## Points North over BLE
+## Points North
 
-A Bluetooth version of [Points North](https://github.com/davidchatting/pointsnorth), for games around tables: each device shows a ring with every nearby device (its own at the bottom) drawn as an outline of its screen at its real-world position, found by comparing compass bearings. Instead of a WebSocket server and a QR-code session, every device nearby joins automatically: each one advertises, and connects to every other device it finds.
+[Points North](https://github.com/davidchatting/pointsnorth) is for games around tables: each device shows a ring with every device in its session (its own at the bottom) drawn as an outline of its screen at its real-world position, found by comparing compass bearings. Tap a device to flash its screen; swipe left or right to flash the device next to you on that side. Every device talks to the same WebSocket relay as the original (`wss://api.davidchatting.com/pubgames`, its `server.js`, unchanged), and devices that can't reach it themselves are bridged:
 
-- `ios/PointsNorth.swift`: a single-file SwiftUI app for iPhone and iPad, set up in Xcode like the iPhone app above. Tap a device to flash its screen; swipe left or right to flash the device next to you (as in the web version, swiping right messages the device on your left).
-- `atoms3r-pointsnorth/`: a PlatformIO project for the AtomS3R (NimBLE-Arduino 1.4). It has no touch screen, so click its button to message the device on your right, hold for your left. Its heading is smoothed (it settles in about a second) and only changes in steps of 2° or more. It uses M5Unified's magnetometer calibration, saved to flash once a minute when it changes: turn it slowly through every direction once, then leave it running for a minute.
+- `pointsnorth/` (linked from the flasher page): the original web app, plus hubs. The first device to open it makes a session, shown as a QR code in the middle of the ring; scan it to join. `?server=ws://host:port/pubgames` points it at another relay.
+- `ios/PointsNorth.swift`: a single-file SwiftUI app for iPhone and iPad, set up in Xcode like the iPhone app above, plus "Privacy - Camera Usage Description". It starts a session of its own, with its QR code in the middle; **JOIN** scans another device's QR code (the web app's too), and **SERVER:** under the role shows whether it can reach the relay (connecting, online or offline). **SPOKE | HUB** at the top picks its role:
+  - **SPOKE**: a device in the session like any other.
+  - **HUB**: also bridges micro:bits running this repo's firmware, which only speak Bluetooth. It connects to every micro:bit nearby and gives each its own WebSocket, so to everyone else a micro:bit is just another device (drawn to the micro:bit's size). Tap a micro:bit to light all its LEDs; its A and B buttons send the same message as a swipe, A to its left neighbour and B to its right. The micro:bit firmware is unchanged.
+- `atoms3r-pointsnorth/`: a PlatformIO project for the AtomS3R, a spoke over WiFi. The first time it starts (or if you hold its button while it starts), it opens a WiFi network of its own, `PN-Atom-xxxx`, named on its screen: join it from a phone and pick your network in the page that opens. It has no camera, so it joins the session the iOS apps nearby advertise over Bluetooth, staying in its session while anything nearby still advertises it and otherwise moving to the strongest. Until then the middle of its ring says what it's waiting for (`WiFi`, `session?` or `server?`). Click its button to message the device on your right, hold for your left. Its heading is smoothed (it settles in about a second) and only changes in steps of 2° or more. It uses M5Unified's magnetometer calibration, saved to flash once a minute when it changes: turn it slowly through every direction once, then leave it running for a minute.
 
-### Protocol
+### Hubs
 
-Each device advertises the Magnetometer Service (so the compass page can add it too) and also has a Points North Service `00E43092-366D-46DA-8323-42BF39B7078E`:
+A hub says so in its `client_info` and `compass` messages (`"role": "hub"`; everyone else sends `"spoke"`), and every ring draws hubs in the middle, turned to their bearing, with the session's QR code on the hub. Round-the-ring neighbours skip hubs, so a hub has no neighbours to swipe to. Nothing stops a session having more than one hub, but they share the middle, and a micro:bit can only be connected to one of them.
 
-- Info `ECC93172-718C-4A86-8459-9CB1D893E71A`: 8-byte client ID, then uint16 little-endian screen width and height in points (about 1/160 inch); read and notify
-- Message `02BA1FE3-F825-486B-9B9B-417D31D6DEBC`: the sender's 8-byte client ID, then UTF-8 text; write
-- Report `80D91D31-5AEF-4697-B843-1C28EA1CB4ED` (Atom only): a connected device's 8-byte client ID, then uint16 little-endian width, height and bearing; write and write without response
-- Outbox `68CAAC8D-DF0B-4D7D-9AC5-7201064754FE` (Atom only): messages to connected devices, as the target's 8-byte client ID, the sender's, then UTF-8 text; notify
+### Messages
 
-A device reads each other device's Info and Bearing (and subscribes to them) and writes to its Message characteristic. Between two iOS devices this all goes over one link, which iOS shares in both directions. The Atom can't do that: its controller won't open a second link to a device that has already connected to it, and NimBLE can only act as a client over one link that another device opened. So a device that connects to an Atom also writes its own details to the Atom's Report characteristic whenever they change, and subscribes to its Outbox. The Atom only connects out to devices that haven't connected to it, such as another Atom.
+The original's JSON messages, each with `clientId` and `sessionId`: `client_info` (`width`, `height`, `bearing`, and now `role`; answered by everyone with their own, sent to the newcomer's `targetClientId`), `compass` (the same fields, whenever the bearing changes), `message` (`text`, to a `targetClientId`) and `disconnect` (sent by the relay when a socket closes). The relay delivers a message with a `targetClientId` to the socket that last used that client ID, which is why each bridged micro:bit needs a socket of its own.
 
-Devices that advertise the Magnetometer Service without the Points North Service (like the iPhone app above) are ignored.
+### Session over Bluetooth
 
-### Limits
-
-Every device holds one link to each of the others. The Atom's prebuilt controller has 6 Bluetooth slots; advertising and scanning take two, so it plays with at most four other devices. Apple doesn't publish a limit for iOS; developers commonly report around 8 to 10 links working reliably. Even so, a broadcast-only design, with no connections and data in the advertisements, would have no table-size limit. On iOS that data would have to fit in the advertised name.
-
-The Atom scans for 1 second every 5 seconds, listening 30 ms in every 160, and asks for 30–60 ms link intervals with a 5 s supervision timeout. It shares one radio between advertising, scanning and its links, and scanning more often starved them: phones dropped the link. A new device takes up to about 5 seconds to appear on the Atom.
+The iOS app, as hub or spoke, advertises the name `PN <session ID>` with the Points North Service `00E43092-366D-46DA-8323-42BF39B7078E`, whose Session characteristic `7513CE11-F0CA-49FC-A8BF-E9D4F8021FA3` holds the session ID as UTF-8, in case a scanner doesn't get the name. iOS only advertises while the app is open on screen.
 
 ## Bluetooth
 

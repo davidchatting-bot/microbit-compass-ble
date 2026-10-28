@@ -1,0 +1,48 @@
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: #000; /* page background = black */
+  color: #fff;
+}
+canvas {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+/* QR visual fallback (if used elsewhere) */
+#qrcode {
+  display: inline-block;
+  padding: 8px;
+  border: 2px solid #333;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+}
+
+/* visible enable-compass button over the black canvas */
+#enableCompassBtn {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 9999;
+  padding: 30px 42px;
+  background: linear-gradient(180deg,#fff,#e6e6e6);
+  color: #000;
+  border: 3px solid rgba(0,0,0,0.2);
+  border-radius: 24px;
+  font-weight: 600;
+  font-size: 42px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.45);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* make it more visible when pressed/touched */
+#enableCompassBtn:active,
+#enableCompassBtn:focus {
+  outline: none;
+  transform: translateY(1px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+}

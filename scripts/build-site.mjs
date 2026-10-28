@@ -15,6 +15,7 @@ await build({
 copyFileSync("flasher/index.html", "_site/index.html");
 copyFileSync("flasher/compass.html", "_site/compass.html"); // redirects to compass/
 cpSync("flasher/compass", "_site/compass", { recursive: true });
+cpSync("flasher/pointsnorth", "_site/pointsnorth", { recursive: true });
 copyFileSync("built/binary.hex", "_site/binary.hex");
 
 let sha = process.env.GITHUB_SHA;

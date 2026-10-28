@@ -1,112 +1,316 @@
-// Points North over BLE: github.com/davidchatting/pointsnorth for iPhone and iPad, sharing
-// compass bearings between nearby devices over Bluetooth instead of through a server.
+// Points North for iPhone and iPad: github.com/davidchatting/pointsnorth as a native app, joining
+// the same sessions as the web app (flasher/pointsnorth/) through the same WebSocket relay.
 // Every device round the table shows a ring with each device (its own at the bottom) drawn as
 // an outline of its screen at its real-world position, found by comparing compass bearings.
 // Tap a device to flash its screen; swipe left or right to flash the device next to you.
 //
-// Each app is both a BLE peripheral and a central. It advertises its bearing with the micro:bit's
-// Magnetometer Service (so the micro:bit compass page can add it too) plus a Points North
-// Service holding its screen size and a message inbox, and it connects to every device it finds
-// advertising the Magnetometer Service that also has the Points North Service. Being nearby
-// takes the place of the web version's session and QR code.
+// SPOKE | HUB at the top picks this device's role. Every device starts as a spoke: it makes a
+// session of its own (its QR code is in the middle of the ring), or joins one with JOIN, which
+// scans another device's QR code. A hub is a spoke that also bridges micro:bits, which can't
+// reach the server themselves: it connects to each one over Bluetooth and gives it its own
+// WebSocket, so the rest of the session sees it as a device like any other. Tapping a micro:bit
+// lights its screen, and its A and B buttons message its left and right neighbours. Hubs say so
+// in their messages ("role": "hub") and are drawn in the middle of the ring, not round it.
 //
-// The AtomS3R version (atoms3r-pointsnorth/) can't use a link that another device opened to read
-// from it, as iOS does, so when this app connects to an Atom it writes its own details to the
-// Atom's Report characteristic, and listens on its Outbox for messages from the Atom.
+// Whether a hub or a spoke, the app advertises its session over Bluetooth, for devices without a
+// camera (the AtomS3R, atoms3r-pointsnorth/) to join: the name "PN <session ID>" and the Points
+// North Service, whose Session characteristic holds the session ID as UTF-8.
 //
-// Setup as for CompassBLE.swift: an iOS App (SwiftUI) project with this as its only Swift file,
-// and "Privacy - Bluetooth Always Usage Description" in the target's Info tab.
+// Setup: an iOS App (SwiftUI) project with this as its only Swift file, and in the target's Info
+// tab "Privacy - Bluetooth Always Usage Description" and "Privacy - Camera Usage Description".
+// Under SPOKE | HUB, SERVER: shows whether it can reach the relay.
 // iOS only advertises while the app is open on screen, so it keeps the screen awake.
 
+import AVFoundation
 import Combine
 import CoreBluetooth
+import CoreImage.CIFilterBuiltins
 import CoreLocation
 import SwiftUI
 
-// Magnetometer Service: Bearing (uint16 LE, degrees, read/notify).
+let webApp = "https://davidchatting-bot.github.io/microbit-compass-ble/pointsnorth/"
+let defaultServer = "wss://api.davidchatting.com/pubgames"
+
+// Points North Service: Session (read: the session ID, UTF-8).
+let pointsNorthService = CBUUID(string: "00E43092-366D-46DA-8323-42BF39B7078E")
+let sessionCharacteristic = CBUUID(string: "7513CE11-F0CA-49FC-A8BF-E9D4F8021FA3")
+// The micro:bit services (see main.ts).
 let magnetometerService = CBUUID(string: "E95DF2D8-251D-470A-A062-FA1922DFA9A8")
 let bearingCharacteristic = CBUUID(string: "E95D9715-251D-470A-A062-FA1922DFA9A8")
-// Points North Service: Info (read/notify: 8-byte client ID, then uint16 LE screen width and
-// height in points) and Message (write: the sender's 8-byte client ID, then UTF-8 text).
-let pointsNorthService = CBUUID(string: "00E43092-366D-46DA-8323-42BF39B7078E")
-let infoCharacteristic = CBUUID(string: "ECC93172-718C-4A86-8459-9CB1D893E71A")
-let messageCharacteristic = CBUUID(string: "02BA1FE3-F825-486B-9B9B-417D31D6DEBC")
-// Only on Atoms: Report (write: our client ID, uint16 LE width, height and bearing) and Outbox
-// (notify: the target's 8-byte client ID, the sender's, then UTF-8 text).
-let reportCharacteristic = CBUUID(string: "80D91D31-5AEF-4697-B843-1C28EA1CB4ED")
-let outboxCharacteristic = CBUUID(string: "68CAAC8D-DF0B-4D7D-9AC5-7201064754FE")
-// The compass page's device picker filters on the "BBC micro:bit" prefix.
-let advertisedName = UIDevice.current.userInterfaceIdiom == .pad ? "BBC micro:bit [ipad]" : "BBC micro:bit [iphone]"
+let buttonService = CBUUID(string: "E95D9882-251D-470A-A062-FA1922DFA9A8")
+let buttonACharacteristic = CBUUID(string: "E95DDA90-251D-470A-A062-FA1922DFA9A8")
+let buttonBCharacteristic = CBUUID(string: "E95DDA91-251D-470A-A062-FA1922DFA9A8")
+let ledService = CBUUID(string: "E95DD91D-251D-470A-A062-FA1922DFA9A8")
+let ledMatrixCharacteristic = CBUUID(string: "E95D7B77-251D-470A-A062-FA1922DFA9A8")
+// A micro:bit's 52 × 42 mm board at roughly the scale of a phone's screen in points.
+let microbitSize = CGSize(width: 290, height: 235)
+// LED Matrix State rows (bit 4 = leftmost): all on for a flash, then the tick it shows when connected.
+let ledsOn = Data([31, 31, 31, 31, 31])
+let ledsTick = Data([0, 1, 2, 20, 8])
 
-// A device round the table, this one included.
+enum Role: String { case spoke, hub }
+
+// This device's link to the relay: connecting at first, then online or offline (while it
+// keeps retrying).
+enum Connection: String { case connecting, online, offline }
+
+// A device in the session, this one included.
 struct Device {
     let id: String // client ID
-    let bearing: Int
-    let width: Double
-    let height: Double
-    let isSelf: Bool
+    var bearing: Double?
+    var width = 100.0, height = 100.0
+    var role = Role.spoke
+    var isSelf = false
+}
+
+func randomId() -> String { String((0..<8).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! }) }
+
+// One WebSocket to the relay, for one client ID: this device, or a micro:bit it bridges. Every
+// message carries the client and session IDs, and the relay delivers it to its targetClientId,
+// or to the rest of the session. Reconnects until closed.
+final class Relay: NSObject, URLSessionWebSocketDelegate {
+    let clientId: String
+    var server: String
+    var sessionId: String
+    var info: () -> [String: Any] = { [:] } // client_info fields: width, height, bearing, role
+    var onMessage: ([String: Any]) -> Void = { _ in }
+    var onState: (Bool) -> Void = { _ in }
+    private var task: URLSessionWebSocketTask?
+    private var closed = false
+    private lazy var session = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
+
+    init(clientId: String, server: String, sessionId: String) {
+        self.clientId = clientId
+        self.server = server
+        self.sessionId = sessionId
+    }
+
+    func open() {
+        guard !closed, task == nil, let url = URL(string: server) else { return }
+        let task = session.webSocketTask(with: url)
+        self.task = task
+        task.resume()
+        send(info().merging(["type": "client_info"]) { $1 })
+        receive(task)
+    }
+
+    // Rejoin, e.g. after the session changes: the relay tells the old session we've gone.
+    func reopen() {
+        task?.cancel(with: .normalClosure, reason: nil)
+        task = nil
+        open()
+    }
+
+    func close() {
+        closed = true
+        task?.cancel(with: .normalClosure, reason: nil)
+        task = nil
+        session.finishTasksAndInvalidate()
+    }
+
+    func send(_ message: [String: Any]) {
+        var message = message
+        message["clientId"] = clientId
+        message["sessionId"] = sessionId
+        guard let task, let data = try? JSONSerialization.data(withJSONObject: message) else { return }
+        task.send(.string(String(decoding: data, as: UTF8.self))) { _ in }
+    }
+
+    // Answer a newcomer's client_info with ours, as the web app does.
+    func replyToClientInfo(_ message: [String: Any]) {
+        guard message["targetClientId"] == nil || message["targetClientId"] is NSNull,
+              let from = message["clientId"] as? String, from != clientId else { return }
+        send(info().merging(["type": "client_info", "targetClientId": from]) { $1 })
+    }
+
+    private func receive(_ task: URLSessionWebSocketTask) {
+        task.receive { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self, task === self.task else { return }
+                switch result {
+                case .success(let message):
+                    var data: Data?
+                    switch message {
+                    case .string(let text): data = Data(text.utf8)
+                    case .data(let bytes): data = bytes
+                    @unknown default: break
+                    }
+                    let json = data.flatMap { try? JSONSerialization.jsonObject(with: $0) }
+                    for item in (json as? [[String: Any]]) ?? [json as? [String: Any]].compactMap({ $0 }) {
+                        self.onMessage(item)
+                    }
+                    self.receive(task)
+                case .failure:
+                    self.onState(false)
+                    self.task = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.open() }
+                }
+            }
+        }
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        if webSocketTask === task { onState(true) }
+    }
+}
+
+// A micro:bit bridged by this device in hub mode.
+final class Bridge {
+    let peripheral: CBPeripheral
+    let relay: Relay
+    var bearing: Int?
+    var sentBearing: Int?
+    var leds: CBCharacteristic?
+
+    init(peripheral: CBPeripheral, relay: Relay) {
+        self.peripheral = peripheral
+        self.relay = relay
+    }
 }
 
 final class PointsNorth: NSObject, ObservableObject, CBPeripheralManagerDelegate, CBCentralManagerDelegate,
     CBPeripheralDelegate, CLLocationManagerDelegate {
+    @Published var role = Role.spoke
     @Published var bearing: Int?
     @Published var flash = false
-    @Published var status = "Starting Bluetooth…"
-    @Published private var peers: [UUID: Peer] = [:]
+    @Published private(set) var sessionId = randomId()
+    @Published private(set) var connection = Connection.connecting
+    @Published private var peers: [String: Device] = [:]
+    @Published private var bridges: [UUID: Bridge] = [:]
+    @Published private var bluetooth = "Starting Bluetooth…"
 
-    let clientId = String((0..<8).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
+    let clientId = randomId()
+    private(set) var server = defaultServer
     private var size = CGSize(width: 100, height: 100)
-
-    // A device found nearby, and what it has told us so far.
-    private struct Peer {
-        let peripheral: CBPeripheral
-        var clientId: String?
-        var width = 100.0, height = 100.0
-        var bearing: Int?
-        var message: CBCharacteristic?
-        var report: CBCharacteristic?
-        var ignored = false // no Points North Service, e.g. the CompassBLE app
-    }
-
+    private var relay: Relay!
     private var peripheral: CBPeripheralManager!
     private var central: CBCentralManager!
     private let location = CLLocationManager()
-    private var bearingChar: CBMutableCharacteristic?
-    private var infoChar: CBMutableCharacteristic?
-    private var pending: [(CBMutableCharacteristic, Data)] = [] // notifications waiting for room
+    private var bridgeTimer: Timer?
+    private var qr: (text: String, image: CGImage)?
 
     override init() {
         super.init()
+        relay = Relay(clientId: clientId, server: server, sessionId: sessionId)
+        relay.info = { [unowned self] in
+            ["width": Double(self.size.width), "height": Double(self.size.height),
+             "bearing": self.bearing.map { Double($0) as Any } ?? NSNull(), "role": self.role.rawValue]
+        }
+        relay.onMessage = { [unowned self] in self.receive($0) }
+        relay.onState = { [unowned self] in self.connection = $0 ? .online : .offline }
+        relay.open()
         peripheral = CBPeripheralManager(delegate: self, queue: nil)
         central = CBCentralManager(delegate: self, queue: nil)
         location.delegate = self
+        location.headingFilter = 1
         location.startUpdatingHeading()
     }
 
-    // Every device with a known bearing, this one included, in bearing order.
+    var joinURL: String {
+        var url = webApp + "?session=" + sessionId
+        if server != defaultServer { url += "&server=" + (server.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? server) }
+        return url
+    }
+
+    // The join link as a QR code: black on white, one pixel per module.
+    var qrCode: CGImage? {
+        let text = joinURL
+        if let qr, qr.text == text { return qr.image }
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(text.utf8)
+        guard let output = filter.outputImage,
+              let image = CIContext().createCGImage(output, from: output.extent) else { return nil }
+        qr = (text, image)
+        return image
+    }
+
+    var status: String {
+        var parts = ["Session \(sessionId)"]
+        if role == .hub { parts.append(bridges.count == 1 ? "1 micro:bit" : "\(bridges.count) micro:bits") }
+        if !bluetooth.isEmpty { parts.append(bluetooth) }
+        return parts.joined(separator: " · ")
+    }
+
+    // Every device with a known bearing, this one included.
     var devices: [Device] {
-        var list = peers.values.compactMap { peer -> Device? in
-            guard let id = peer.clientId, let bearing = peer.bearing else { return nil }
-            return Device(id: id, bearing: bearing, width: peer.width, height: peer.height, isSelf: false)
-        }
+        var list = peers.values.filter { $0.bearing != nil }
         if let bearing {
-            list.append(Device(id: clientId, bearing: bearing, width: size.width, height: size.height, isSelf: true))
+            list.append(Device(id: clientId, bearing: Double(bearing), width: size.width, height: size.height, role: role, isSelf: true))
         }
-        return list.sorted { $0.bearing < $1.bearing }
+        return list
+    }
+
+    // MARK: The session
+
+    // Join the session in a scanned QR code: a Points North link with ?session= (and ?server=).
+    func join(_ link: String) -> Bool {
+        guard let query = URLComponents(string: link)?.queryItems,
+              let session = query.first(where: { $0.name == "session" })?.value, !session.isEmpty else { return false }
+        sessionId = session
+        connection = .connecting
+        server = query.first(where: { $0.name == "server" })?.value ?? defaultServer
+        peers = [:]
+        for relay in [relay!] + bridges.values.map(\.relay) {
+            relay.sessionId = sessionId
+            relay.server = server
+            relay.reopen()
+        }
+        advertise()
+        return true
+    }
+
+    func setRole(_ newRole: Role) {
+        guard newRole != role else { return }
+        role = newRole
+        relay.send(relay.info().merging(["type": "client_info"]) { $1 }) // tell everyone
+        if role == .hub {
+            startScanning()
+            bridgeTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [unowned self] _ in self.sendBridgeBearings() }
+        } else {
+            central.stopScan()
+            bridgeTimer?.invalidate()
+            for bridge in bridges.values { central.cancelPeripheralConnection(bridge.peripheral) }
+        }
+    }
+
+    private func receive(_ message: [String: Any]) {
+        guard let type = message["type"] as? String, let id = message["clientId"] as? String, id != clientId else { return }
+        switch type {
+        case "client_info", "compass":
+            var device = peers[id] ?? Device(id: id)
+            if let bearing = message["bearing"] as? NSNumber { device.bearing = bearing.doubleValue }
+            if let width = message["width"] as? NSNumber { device.width = width.doubleValue }
+            if let height = message["height"] as? NSNumber { device.height = height.doubleValue }
+            if let role = (message["role"] as? String).flatMap(Role.init) { device.role = role }
+            peers[id] = device
+            if type == "client_info" { relay.replyToClientInfo(message) }
+        case "message":
+            showMessage()
+        case "disconnect":
+            peers[id] = nil
+        default: break
+        }
     }
 
     // MARK: Messages
 
-    func send(_ text: String, to id: String) {
-        guard id != clientId, let peer = peers.values.first(where: { $0.clientId == id }), let message = peer.message else { return }
-        peer.peripheral.writeValue(Data(clientId.utf8) + Data(text.utf8), for: message, type: .withResponse)
+    func send(_ text: String, to id: String, from relay: Relay? = nil) {
+        print("PN: \((relay ?? self.relay).clientId) sends \(text) to \(id)")
+        (relay ?? self.relay).send(["type": "message", "text": text, "targetClientId": id])
     }
 
-    // Message the device `offset` places round the circle (in bearing order) from this one.
+    // The device `offset` places round the circle (in bearing order) from the one with this ID:
+    // devices sit opposite where they point, so -1 is on its right and +1 on its left. Hubs sit
+    // in the middle, so they have no neighbours.
+    func neighbour(of id: String, offset: Int) -> String? {
+        let ordered = devices.filter { $0.role != .hub }.sorted { $0.bearing! < $1.bearing! }
+        print("PN: neighbour \(offset) of \(id) in", ordered.map { "\($0.id)@\(Int($0.bearing!))" })
+        guard ordered.count > 1, let i = ordered.firstIndex(where: { $0.id == id }) else { return nil }
+        return ordered[((i + offset) % ordered.count + ordered.count) % ordered.count].id
+    }
+
     func sendToNeighbour(_ text: String, offset: Int) {
-        let ordered = devices
-        guard ordered.count > 1, let i = ordered.firstIndex(where: { $0.isSelf }) else { return }
-        send(text, to: ordered[((i + offset) % ordered.count + ordered.count) % ordered.count].id)
+        if let id = neighbour(of: clientId, offset: offset) { send(text, to: id) }
     }
 
     private func showMessage() {
@@ -127,13 +331,7 @@ final class PointsNorth: NSObject, ObservableObject, CBPeripheralManagerDelegate
         default: location.headingOrientation = .portrait
         }
         size = newSize
-        objectWillChange.send()
-        if let infoChar { notify(infoData(), infoChar) }
-        sendReports()
-    }
-
-    private func infoData() -> Data {
-        Data(clientId.utf8) + uint16(Int(size.width)) + uint16(Int(size.height))
+        sendCompass()
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateHeading heading: CLHeading) {
@@ -141,52 +339,50 @@ final class PointsNorth: NSObject, ObservableObject, CBPeripheralManagerDelegate
         let value = Int(heading.magneticHeading.rounded()) % 360
         guard value != bearing else { return }
         bearing = value
-        if let bearingChar { notify(uint16(value), bearingChar) }
-        sendReports()
+        sendCompass()
     }
 
     func locationManagerShouldDisplayHeadingCalibration(_ manager: CLLocationManager) -> Bool { true }
 
-    // MARK: Peripheral: sharing this device
+    private func sendCompass() {
+        guard let bearing else { return }
+        relay.send(["type": "compass", "bearing": Double(bearing), "width": Double(size.width), "height": Double(size.height),
+                    "role": role.rawValue])
+    }
+
+    // MARK: Peripheral: advertising the session
 
     func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
         switch peripheral.state {
-        case .poweredOn: status = "Starting to advertise…"
-        case .poweredOff: status = "Bluetooth is off"
-        case .unauthorized: status = "Bluetooth not allowed: see Settings → Privacy → Bluetooth"
-        case .unsupported: status = "No Bluetooth LE on this device"
-        default: status = "Bluetooth unavailable"
+        case .poweredOn: bluetooth = ""
+        case .poweredOff: bluetooth = "Bluetooth is off"
+        case .unauthorized: bluetooth = "Bluetooth not allowed: see Settings → Privacy → Bluetooth"
+        case .unsupported: bluetooth = "No Bluetooth LE on this device"
+        default: bluetooth = "Bluetooth unavailable"
         }
         guard peripheral.state == .poweredOn else { return }
-        let bearing = CBMutableCharacteristic(type: bearingCharacteristic, properties: [.read, .notify], value: nil, permissions: .readable)
-        let magnetometer = CBMutableService(type: magnetometerService, primary: true)
-        magnetometer.characteristics = [bearing]
-
-        let info = CBMutableCharacteristic(type: infoCharacteristic, properties: [.read, .notify], value: nil, permissions: .readable)
-        let message = CBMutableCharacteristic(type: messageCharacteristic, properties: [.write], value: nil, permissions: .writeable)
-        let pointsNorth = CBMutableService(type: pointsNorthService, primary: true)
-        pointsNorth.characteristics = [info, message]
-
-        bearingChar = bearing
-        infoChar = info
+        let session = CBMutableCharacteristic(type: sessionCharacteristic, properties: [.read], value: nil, permissions: .readable)
+        let service = CBMutableService(type: pointsNorthService, primary: true)
+        service.characteristics = [session]
         peripheral.removeAllServices()
-        peripheral.add(magnetometer)
-        peripheral.add(pointsNorth)
-        // Only the Magnetometer Service is advertised: there's no room for a second 128-bit UUID.
-        peripheral.startAdvertising([CBAdvertisementDataLocalNameKey: advertisedName,
-                                     CBAdvertisementDataServiceUUIDsKey: [magnetometerService]])
+        peripheral.add(service)
+        advertise()
+    }
+
+    private func advertise() {
+        guard peripheral?.state == .poweredOn else { return }
+        peripheral.stopAdvertising()
+        peripheral.startAdvertising([CBAdvertisementDataLocalNameKey: "PN \(sessionId)",
+                                     CBAdvertisementDataServiceUUIDsKey: [pointsNorthService]])
     }
 
     func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
-        status = error.map { "Couldn't advertise: \($0.localizedDescription)" } ?? "Looking for devices nearby…"
+        if let error { bluetooth = "Couldn't advertise: \(error.localizedDescription)" }
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
-        let data: Data
-        switch request.characteristic.uuid {
-        case bearingCharacteristic: data = uint16(bearing ?? 0)
-        case infoCharacteristic: data = infoData()
-        default:
+        let data = Data(sessionId.utf8)
+        guard request.characteristic.uuid == sessionCharacteristic else {
             peripheral.respond(to: request, withResult: .attributeNotFound)
             return
         }
@@ -198,142 +394,155 @@ final class PointsNorth: NSObject, ObservableObject, CBPeripheralManagerDelegate
         peripheral.respond(to: request, withResult: .success)
     }
 
-    func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
-        if requests.contains(where: { $0.characteristic.uuid == messageCharacteristic }) { showMessage() }
-        if let first = requests.first { peripheral.respond(to: first, withResult: .success) }
-    }
-
-    // iOS drops a notification when its send queue is full, so queue the latest value for each
-    // characteristic and send it when there's room.
-    private func notify(_ data: Data, _ characteristic: CBMutableCharacteristic) {
-        pending.removeAll { $0.0 === characteristic }
-        pending.append((characteristic, data))
-        sendPending()
-    }
-
-    private func sendPending() {
-        while let (characteristic, data) = pending.first {
-            guard peripheral.updateValue(data, for: characteristic, onSubscribedCentrals: nil) else { return }
-            pending.removeFirst()
-        }
-    }
-
-    func peripheralManagerIsReady(toUpdateSubscribers peripheral: CBPeripheralManager) { sendPending() }
-
-    // MARK: Central: finding the other devices
+    // MARK: Central: bridging micro:bits (hub mode)
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        if role == .hub { startScanning() }
+    }
+
+    private func startScanning() {
         guard central.state == .poweredOn else { return }
-        // Duplicates, so a device that disconnected is found again when it comes back.
-        central.scanForPeripherals(withServices: [magnetometerService], options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
+        // micro:bits don't advertise their services, only their name. Duplicates, so a micro:bit
+        // that disconnected is found again when it comes back.
+        central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
     }
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        guard peers[peripheral.identifier] == nil else { return }
-        peers[peripheral.identifier] = Peer(peripheral: peripheral)
+        let name = advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? peripheral.name ?? ""
+        guard role == .hub, name.hasPrefix("BBC micro:bit"), bridges[peripheral.identifier] == nil else { return }
+        // A client ID that stays the same each time this micro:bit is bridged.
+        let id = "mb-" + peripheral.identifier.uuidString.prefix(8).lowercased()
+        let bridge = Bridge(peripheral: peripheral, relay: Relay(clientId: id, server: server, sessionId: sessionId))
+        bridge.relay.info = { [unowned bridge] in
+            ["width": Double(microbitSize.width), "height": Double(microbitSize.height),
+             "bearing": bridge.bearing.map { Double($0) as Any } ?? NSNull(), "role": Role.spoke.rawValue]
+        }
+        bridge.relay.onMessage = { [unowned self, unowned bridge] message in
+            switch message["type"] as? String {
+            case "client_info": bridge.relay.replyToClientInfo(message)
+            case "message": self.flashLEDs(bridge)
+            default: break
+            }
+        }
+        bridges[peripheral.identifier] = bridge
         peripheral.delegate = self
         central.connect(peripheral)
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        peripheral.discoverServices([magnetometerService, pointsNorthService])
+        bridges[peripheral.identifier]?.relay.open()
+        peripheral.discoverServices([magnetometerService, buttonService, ledService])
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
-        peers[peripheral.identifier] = nil
+        dropBridge(peripheral)
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        if peers[peripheral.identifier]?.ignored != true { peers[peripheral.identifier] = nil }
+        dropBridge(peripheral)
+    }
+
+    // The relay tells the session the micro:bit has gone when its WebSocket closes.
+    private func dropBridge(_ peripheral: CBPeripheral) {
+        bridges[peripheral.identifier]?.relay.close()
+        bridges[peripheral.identifier] = nil
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        let services = peripheral.services ?? []
-        guard services.contains(where: { $0.uuid == pointsNorthService }) else {
-            // Not playing (e.g. the CompassBLE app): remember it so it isn't connected to again.
-            peers[peripheral.identifier]?.ignored = true
-            central.cancelPeripheralConnection(peripheral)
-            return
-        }
-        for service in services { peripheral.discoverCharacteristics(nil, for: service) }
+        print("PN: \(peripheral.name ?? "?") services", (peripheral.services ?? []).map(\.uuid), error ?? "")
+        for service in peripheral.services ?? [] { peripheral.discoverCharacteristics(nil, for: service) }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        print("PN: \(peripheral.name ?? "?") \(service.uuid) has", (service.characteristics ?? []).map(\.uuid), error ?? "")
         for characteristic in service.characteristics ?? [] {
             switch characteristic.uuid {
-            case bearingCharacteristic, infoCharacteristic:
-                peripheral.readValue(for: characteristic)
+            case bearingCharacteristic, buttonACharacteristic, buttonBCharacteristic:
+                print("PN: \(bridges[peripheral.identifier]?.relay.clientId ?? "?") subscribing to \(characteristic.uuid)")
+                if characteristic.uuid == bearingCharacteristic { peripheral.readValue(for: characteristic) }
                 peripheral.setNotifyValue(true, for: characteristic)
-            case messageCharacteristic:
-                peers[peripheral.identifier]?.message = characteristic
-            case reportCharacteristic:
-                peers[peripheral.identifier]?.report = characteristic
-                sendReports()
-            case outboxCharacteristic:
-                peripheral.setNotifyValue(true, for: characteristic)
+            case ledMatrixCharacteristic:
+                bridges[peripheral.identifier]?.leds = characteristic
             default: break
             }
         }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard let data = characteristic.value else { return }
-        let id = peripheral.identifier
-        if characteristic.uuid == bearingCharacteristic, data.count >= 2 {
-            peers[id]?.bearing = uint16(data, at: 0)
-        } else if characteristic.uuid == infoCharacteristic, data.count >= 12 {
-            peers[id]?.clientId = String(decoding: data.prefix(8), as: UTF8.self)
-            peers[id]?.width = Double(uint16(data, at: 8))
-            peers[id]?.height = Double(uint16(data, at: 10))
-        } else if characteristic.uuid == outboxCharacteristic, data.count >= 16,
-                  String(decoding: data.prefix(8), as: UTF8.self) == clientId {
-            showMessage()
+        guard let bridge = bridges[peripheral.identifier], let data = characteristic.value, !data.isEmpty else { return }
+        let first = data[data.startIndex]
+        if characteristic.uuid != bearingCharacteristic {
+            print("PN: \(bridge.relay.clientId) button \(characteristic.uuid == buttonACharacteristic ? "A" : "B") = \(first)")
+        }
+        switch characteristic.uuid {
+        case bearingCharacteristic where data.count >= 2:
+            bridge.bearing = Int(first) | Int(data[data.startIndex + 1]) << 8
+        // A (on the left) messages the micro:bit's left neighbour, B its right, when pressed: the
+        // same messages as swiping on a screen.
+        case buttonACharacteristic where first == 1:
+            if let id = neighbour(of: bridge.relay.clientId, offset: 1) { send("Swiped!", to: id, from: bridge.relay) }
+        case buttonBCharacteristic where first == 1:
+            if let id = neighbour(of: bridge.relay.clientId, offset: -1) { send("Swiped!", to: id, from: bridge.relay) }
+        default: break
         }
     }
 
-    // Tell each Atom this device's details (iOS devices read them instead).
-    private func sendReports() {
-        let report = infoData() + uint16(bearing ?? 0)
-        for peer in peers.values {
-            if let characteristic = peer.report {
-                peer.peripheral.writeValue(report, for: characteristic, type: .withoutResponse)
-            }
+    // micro:bits notify their bearing every 20 ms, so pass changes on at most five times a second.
+    private func sendBridgeBearings() {
+        for bridge in bridges.values where bridge.bearing != nil && bridge.bearing != bridge.sentBearing {
+            bridge.sentBearing = bridge.bearing
+            bridge.relay.send(bridge.relay.info().merging(["type": "compass"]) { $1 })
         }
     }
 
-    private func uint16(_ value: Int) -> Data { Data([UInt8(value & 0xff), UInt8((value >> 8) & 0xff)]) }
-    private func uint16(_ data: Data, at offset: Int) -> Int {
-        Int(data[data.startIndex + offset]) | Int(data[data.startIndex + offset + 1]) << 8
+    private func flashLEDs(_ bridge: Bridge) {
+        guard let leds = bridge.leds else { return }
+        bridge.peripheral.writeValue(ledsOn, for: leds, type: .withResponse)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            bridge.peripheral.writeValue(ledsTick, for: leds, type: .withResponse)
+        }
     }
 }
 
 // MARK: Views
 
-// The compass ring's geometry, shared by drawing and hit-testing. Angles are in degrees,
-// clockwise from the top of the screen.
+// The ring's geometry, as in the web app, shared by drawing and hit-testing. Angles are in
+// degrees, clockwise from the top of the screen.
 struct Ring {
     let center: CGPoint
+    let qrSize: CGFloat
     let inner: CGFloat
     let outer: CGFloat
+    let bearing: Double // this device's
 
-    init(_ size: CGSize) {
+    init(_ size: CGSize, bearing: Double) {
         center = CGPoint(x: size.width / 2, y: size.height / 2)
-        inner = min(size.width, size.height) * 0.3 / sqrt(2)
+        qrSize = min(size.width, size.height) * 0.3
+        inner = qrSize / CGFloat(2).squareRoot()
         outer = inner * 2
+        self.bearing = bearing
     }
 
-    // A device's position round the ring, seen from a device with this bearing: devices sit on
-    // the opposite side of the table from the direction they point.
-    func angle(of device: Device, from bearing: Int) -> Double { Double(device.bearing - bearing + 180) }
+    // Devices round the ring sit on the opposite side of the table from the direction they
+    // point; hubs in the middle just point.
+    func angle(of device: Device) -> Double {
+        device.bearing! - bearing + (device.role == .hub ? 0 : 180)
+    }
 
-    // The outline of a device's screen in its own rotated frame: on the upward axis, between
-    // the ring's inner circle and its edge, scaled to fit.
+    // The outline of a device's screen in its own rotated frame. Round the ring: on the upward
+    // axis, between the inner circle and the edge. A hub: in the middle, inside the inner circle.
     func outline(of device: Device) -> (rect: CGRect, cornerRadius: CGFloat) {
-        let margin = outer - inner
-        let scale = min(0.15, margin * 0.9 / max(device.width, device.height))
-        let w = device.width * scale, h = device.height * scale
-        let radialCenter = inner + margin * 0.25 + h / 2
+        let width = CGFloat(device.width), height = CGFloat(device.height)
+        if device.role == .hub {
+            let scale: CGFloat = inner * 2 * 0.95 / hypot(width, height)
+            let w = width * scale, h = height * scale
+            return (CGRect(x: -w / 2, y: -h / 2, width: w, height: h), 80 * scale)
+        }
+        let margin: CGFloat = outer - inner
+        let scale: CGFloat = min(0.15, margin * 0.9 / max(width, height))
+        let w = width * scale, h = height * scale
+        let radialCenter: CGFloat = inner + margin * 0.25 + h / 2
         return (CGRect(x: -w / 2, y: -radialCenter - h / 2, width: w, height: h), 80 * scale)
     }
 }
@@ -341,6 +550,7 @@ struct Ring {
 struct ContentView: View {
     @StateObject private var model = PointsNorth()
     @State private var touchStart: Date?
+    @State private var scanning = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -349,13 +559,27 @@ struct ContentView: View {
                     .contentShape(Rectangle())
                     .gesture(touches(geometry.size))
                 VStack {
+                    HStack(spacing: 12) {
+                        roleButton(.spoke)
+                        Text("|").foregroundColor(.gray)
+                        roleButton(.hub)
+                    }
+                    .padding(.top, 60)
+                    // SERVER: CONNECTING, ONLINE or OFFLINE, white when online.
+                    Text("SERVER: " + model.connection.rawValue.uppercased())
+                        .foregroundColor(model.connection == .online ? .white : .gray)
+                        .padding(.top, 4)
                     Spacer()
+                    Text("JOIN")
+                        .foregroundColor(.white)
+                        .onTapGesture { scanning = true }
                     Text(model.status)
                         .font(.footnote)
                         .foregroundColor(.gray)
-                        .padding()
+                        .padding(.bottom, 40)
                 }
-                .allowsHitTesting(false)
+                .font(.system(.title3, design: .monospaced))
+                .padding(.horizontal)
                 Color.white
                     .opacity(model.flash ? 1 : 0)
                     .animation(.easeOut(duration: 0.22), value: model.flash)
@@ -367,49 +591,78 @@ struct ContentView: View {
         .ignoresSafeArea()
         .background(Color.black)
         .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
+        .sheet(isPresented: $scanning) {
+            ZStack(alignment: .bottom) {
+                Scanner { code in if model.join(code) { scanning = false } }
+                    .ignoresSafeArea()
+                Text("Scan a Points North QR code").foregroundColor(.white).padding(40)
+            }
+        }
+    }
+
+    // SPOKE | HUB: the selected role is white and bold.
+    private func roleButton(_ role: Role) -> some View {
+        Text(role.rawValue.uppercased())
+            .fontWeight(model.role == role ? .bold : .regular)
+            .foregroundColor(model.role == role ? .white : .gray)
+            .onTapGesture { model.setRole(role) }
     }
 
     private func draw(_ context: inout GraphicsContext, _ size: CGSize) {
-        let ring = Ring(size)
+        let ring = Ring(size, bearing: Double(model.bearing ?? 0))
         context.translateBy(x: ring.center.x, y: ring.center.y)
         let edge = CGRect(x: -ring.outer, y: -ring.outer, width: ring.outer * 2, height: ring.outer * 2)
         context.stroke(Path(ellipseIn: edge), with: .color(.white), lineWidth: 2)
-        guard let bearing = model.bearing else { return }
 
-        // Dotted north line between the inner circle and the edge.
-        var north = context
-        north.rotate(by: .degrees(Double(-bearing)))
-        var line = Path()
-        line.move(to: CGPoint(x: 0, y: -ring.inner))
-        line.addLine(to: CGPoint(x: 0, y: -ring.outer))
-        north.stroke(line, with: .color(.white), style: StrokeStyle(lineWidth: 2, dash: [3, 6]))
+        let devices = model.bearing == nil ? [] : model.devices
+        if model.bearing != nil {
+            // Dotted north line between the inner circle and the edge.
+            var north = context
+            north.rotate(by: .degrees(-ring.bearing))
+            var line = Path()
+            line.move(to: CGPoint(x: 0, y: -ring.inner))
+            line.addLine(to: CGPoint(x: 0, y: -ring.outer))
+            north.stroke(line, with: .color(.white), style: StrokeStyle(lineWidth: 2, dash: [3, 6]))
+        }
 
-        for device in model.devices {
+        for device in devices {
             var frame = context
-            frame.rotate(by: .degrees(ring.angle(of: device, from: bearing)))
+            frame.rotate(by: .degrees(ring.angle(of: device)))
             let outline = ring.outline(of: device)
             let path = Path(roundedRect: outline.rect, cornerRadius: outline.cornerRadius)
             frame.fill(path, with: .color(.black))
             frame.stroke(path, with: .color(.white), lineWidth: 2)
         }
+
+        // The QR code for joining, on a hub's screen if there is one.
+        guard let qr = model.qrCode else { return }
+        var frame = context
+        var side = ring.qrSize
+        if let hub = devices.first(where: { $0.role == .hub }) {
+            frame.rotate(by: .degrees(ring.angle(of: hub)))
+            let rect = ring.outline(of: hub).rect
+            side = min(rect.width, rect.height) * 0.7
+        }
+        frame.draw(Image(decorative: qr, scale: 1).interpolation(.none),
+                   in: CGRect(x: -side / 2, y: -side / 2, width: side, height: side))
     }
 
     // The other device whose outline is under a point, if any.
     private func device(at point: CGPoint, _ size: CGSize) -> Device? {
         guard let bearing = model.bearing else { return nil }
-        let ring = Ring(size)
+        let ring = Ring(size, bearing: Double(bearing))
         let x = point.x - ring.center.x, y = point.y - ring.center.y
-        return model.devices.first { device in
+        return model.devices.first { (device: Device) -> Bool in
             guard !device.isSelf else { return false }
             // Undo the device's rotation to get the point in its frame.
-            let t = ring.angle(of: device, from: bearing) * .pi / 180
-            let p = CGPoint(x: x * cos(t) + y * sin(t), y: -x * sin(t) + y * cos(t))
+            let t = CGFloat(ring.angle(of: device) * .pi / 180)
+            let c: CGFloat = cos(t), s: CGFloat = sin(t)
+            let p = CGPoint(x: x * c + y * s, y: y * c - x * s)
             return ring.outline(of: device).rect.contains(p)
         }
     }
 
-    // Tap a device to message it; swipe to message the device next to you. As in the web
-    // version, swiping right messages the device to your left and vice versa.
+    // Tap a device to message it; swipe to message the device next to you on that side.
     private func touches(_ size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
@@ -425,6 +678,57 @@ struct ContentView: View {
                     model.send("Tapped!", to: target.id)
                 }
             }
+    }
+}
+
+// A camera view that reports each QR code it sees.
+struct Scanner: UIViewControllerRepresentable {
+    let onCode: (String) -> Void
+
+    func makeUIViewController(context: Context) -> ScannerController {
+        let controller = ScannerController()
+        controller.onCode = onCode
+        return controller
+    }
+
+    func updateUIViewController(_ controller: ScannerController, context: Context) {}
+}
+
+final class ScannerController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
+    var onCode: (String) -> Void = { _ in }
+    private let session = AVCaptureSession()
+    private var preview: AVCaptureVideoPreviewLayer?
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        guard let camera = AVCaptureDevice.default(for: .video),
+              let input = try? AVCaptureDeviceInput(device: camera), session.canAddInput(input) else { return }
+        session.addInput(input)
+        let output = AVCaptureMetadataOutput()
+        guard session.canAddOutput(output) else { return }
+        session.addOutput(output)
+        output.setMetadataObjectsDelegate(self, queue: .main)
+        output.metadataObjectTypes = [.qr]
+        let preview = AVCaptureVideoPreviewLayer(session: session)
+        preview.videoGravity = .resizeAspectFill
+        view.layer.addSublayer(preview)
+        self.preview = preview
+        DispatchQueue.global(qos: .userInitiated).async { self.session.startRunning() }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        preview?.frame = view.bounds
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        session.stopRunning()
+    }
+
+    func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput objects: [AVMetadataObject], from connection: AVCaptureConnection) {
+        if let code = (objects.first as? AVMetadataMachineReadableCodeObject)?.stringValue { onCode(code) }
     }
 }
 

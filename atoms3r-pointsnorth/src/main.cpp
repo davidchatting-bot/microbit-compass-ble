@@ -1,271 +1,236 @@
-// Points North over BLE for the M5Stack AtomS3R: joins the iOS app (ios/PointsNorth.swift)
-// round the table. The screen shows a ring with each device (this one at the bottom) drawn as
+// Points North for the M5Stack AtomS3R: a spoke in the same sessions as the web app
+// (flasher/pointsnorth/) and the iOS app (ios/PointsNorth.swift), through the same WebSocket
+// relay, over WiFi. The screen shows a ring with each device (this one at the bottom) drawn as
 // an outline of its screen at its real-world position, found by comparing compass bearings,
-// and flashes white when another device messages it. The Atom has no touch screen, so its
-// button messages a neighbour instead: click for the device to your right, hold for your left.
+// with hubs in the middle, and flashes white when another device messages it. The Atom has no
+// touch screen, so its button messages a neighbour instead: click for the device to your
+// right, hold for your left.
 //
-// Same protocol as the iOS app: it advertises its bearing with the micro:bit's Magnetometer
-// Service plus a Points North Service, and connects to every device it finds advertising the
-// Magnetometer Service that also has Points North. Its controller won't open a second link to
-// a device that has already connected to it (iOS shares one link both ways, the Atom can't), so
-// a device connected to the Atom does the talking over that link: it writes its details to the
-// Atom's Report characteristic, and the Atom answers through notifications on its Outbox.
+// The Atom has no camera to scan a session's QR code, so it joins the session that the iOS
+// apps nearby advertise over Bluetooth: the name "PN <session ID>" with the Points North
+// Service (or, if the name is missing, its Session characteristic). It keeps to its session
+// while any device nearby still advertises it, and otherwise moves to the strongest one.
+//
+// The first time (or when held down while it starts), it can't join a WiFi network, so it opens
+// its own, named on screen: join that from a phone and pick the network in the page that opens.
+#include <ArduinoJson.h>
 #include <M5Unified.h>
 #include <NimBLEDevice.h>
+#include <WebSocketsClient.h>
+#include <WiFi.h>
+#include <WiFiManager.h>
 #include <vector>
 
-#define MAGNETOMETER_SERVICE   "e95df2d8-251d-470a-a062-fa1922dfa9a8"
-#define BEARING_CHARACTERISTIC "e95d9715-251d-470a-a062-fa1922dfa9a8"  // uint16 LE, degrees
-// Info: 8-byte client ID, then uint16 LE screen width and height in points.
-// Message: the sender's 8-byte client ID, then UTF-8 text.
-// Report: a connected device's 8-byte client ID, uint16 LE width, height and bearing.
-// Outbox: messages to connected devices: the target's 8-byte client ID, the sender's, then text.
-#define POINTS_NORTH_SERVICE   "00e43092-366d-46da-8323-42bf39b7078e"
-#define INFO_CHARACTERISTIC    "ecc93172-718c-4a86-8459-9cb1d893e71a"
-#define MESSAGE_CHARACTERISTIC "02ba1fe3-f825-486b-9b9b-417d31d6debc"
-#define REPORT_CHARACTERISTIC  "80d91d31-5aef-4697-b843-1c28ea1cb4ed"
-#define OUTBOX_CHARACTERISTIC  "68caac8d-df0b-4d7d-9ac5-7201064754fe"
+#ifndef PN_SERVER_HOST  // the relay, as in the web app; build flags can point it at another one
+#define PN_SERVER_HOST "api.davidchatting.com"
+#define PN_SERVER_PORT 443
+#define PN_SERVER_PATH "/pubgames"
+#define PN_SERVER_SSL true
+#endif
 
-// The 0.85" screen in iOS-style points (about 1/160 inch), so its outline is to scale.
-const int SCREEN_POINTS = 96;
-// The prebuilt controller allows 6 BLE activities: advertising, scanning, and one link for
-// each other device.
-const int MAX_PEERS = 4;
+#define POINTS_NORTH_SERVICE   "00e43092-366d-46da-8323-42bf39b7078e"
+#define SESSION_CHARACTERISTIC "7513ce11-f0ca-49fc-a8bf-e9d4f8021fa3"  // the session ID, UTF-8
+
+// The 24 mm Atom at roughly the scale of a phone's screen in points, so its outline is to scale.
+const int SIZE_POINTS = 135;
+const int MAX_PEERS = 16;
 
 char clientId[9];
 M5Canvas canvas(&M5.Display);
-NimBLECharacteristic *bearingChar, *infoChar, *outboxChar;
+WebSocketsClient socket;
+WiFiManager wifi;
+char portalName[16];
+bool online = false;
+String sessionId;
 int bearing = -1;
-volatile uint32_t flashUntil = 0;
+uint32_t flashUntil = 0;
 
-// Another device round the table, and what it has told us so far: over a link we opened
-// (reading from it), or over one it opened (from its reports).
+// Another device in the session, and what it has told us so far.
 struct Peer {
   bool used = false;
-  volatile bool disconnected = false;
-  bool incoming = false;
-  uint16_t connHandle = BLE_HS_CONN_HANDLE_NONE;  // incoming links
-  NimBLEAddress address;
-  NimBLEClient* client = nullptr;  // outgoing links
-  NimBLERemoteCharacteristic* message = nullptr;
-  NimBLERemoteCharacteristic* report = nullptr;  // only other Atoms have one
-  char id[9] = "";
-  int width = 100, height = 100;
-  int bearing = -1;
+  char id[33] = "";
+  float bearing = -1;
+  float width = 100, height = 100;
+  bool hub = false;
 };
 Peer peers[MAX_PEERS];
-portMUX_TYPE peersLock = portMUX_INITIALIZER_UNLOCKED;  // the Bluetooth task claims slots too
-std::vector<NimBLEAddress> ignored;  // no Points North Service, e.g. the CompassBLE app
 
-// A device seen advertising, waiting for the main loop to connect to it.
-volatile bool found = false;
-NimBLEAddress foundAddress;
-
-Peer* claimPeer() {
-  Peer* slot = nullptr;
-  taskENTER_CRITICAL(&peersLock);
+Peer* peerFor(const char* id, bool add) {
+  for (auto& p : peers)
+    if (p.used && strcmp(p.id, id) == 0) return &p;
+  if (!add) return nullptr;
   for (auto& p : peers)
     if (!p.used) {
       p = Peer();
       p.used = true;
-      slot = &p;
+      strlcpy(p.id, id, sizeof(p.id));
+      return &p;
+    }
+  return nullptr;
+}
+
+// MARK: The relay
+
+void send(JsonDocument& message) {
+  message["clientId"] = clientId;
+  message["sessionId"] = sessionId;
+  String text;
+  serializeJson(message, text);
+  socket.sendTXT(text);
+}
+
+void sendInfo(const char* type, const char* target = nullptr) {
+  JsonDocument message;
+  message["type"] = type;
+  message["width"] = SIZE_POINTS;
+  message["height"] = SIZE_POINTS;
+  if (bearing >= 0) message["bearing"] = bearing;
+  else message["bearing"] = nullptr;
+  message["role"] = "spoke";
+  if (target) message["targetClientId"] = target;
+  send(message);
+}
+
+void receive(JsonObject message) {
+  const char* type = message["type"] | "";
+  const char* id = message["clientId"] | "";
+  if (!id[0] || strcmp(id, clientId) == 0) return;
+  if (!strcmp(type, "client_info") || !strcmp(type, "compass")) {
+    Peer* p = peerFor(id, true);
+    if (!p) return;
+    if (message["bearing"].is<float>()) p->bearing = message["bearing"];
+    if (message["width"].is<float>()) p->width = message["width"];
+    if (message["height"].is<float>()) p->height = message["height"];
+    if (message["role"].is<const char*>()) p->hub = message["role"] == "hub";
+    // Answer a newcomer's client_info with ours, as the web app does.
+    if (!strcmp(type, "client_info") && message["targetClientId"].isNull()) sendInfo("client_info", id);
+  } else if (!strcmp(type, "message")) {
+    Serial.printf("Message from %s: %s\n", id, message["text"] | "");
+    flashUntil = millis() + 150;
+  } else if (!strcmp(type, "disconnect")) {
+    if (Peer* p = peerFor(id, false)) p->used = false;
+  }
+}
+
+void onSocket(WStype_t type, uint8_t* data, size_t length) {
+  switch (type) {
+    case WStype_CONNECTED:
+      online = true;
+      sendInfo("client_info");
+      break;
+    case WStype_DISCONNECTED:
+      online = false;
+      for (auto& p : peers) p.used = false;
+      break;
+    case WStype_TEXT: {
+      JsonDocument json;
+      if (deserializeJson(json, data, length)) break;
+      if (json.is<JsonArray>())
+        for (JsonObject item : json.as<JsonArray>()) receive(item);
+      else
+        receive(json.as<JsonObject>());
       break;
     }
-  taskEXIT_CRITICAL(&peersLock);
-  return slot;
+    default:
+      break;
+  }
 }
 
-Peer* peerFor(NimBLEClient* client) {
-  for (auto& p : peers)
-    if (p.used && !p.incoming && p.client == client) return &p;
-  return nullptr;
+// Once there's WiFi and a session. The client reconnects by itself from then on.
+void connectSocket() {
+  if (PN_SERVER_SSL) socket.beginSSL(PN_SERVER_HOST, PN_SERVER_PORT, PN_SERVER_PATH, "", "");
+  else socket.begin(PN_SERVER_HOST, PN_SERVER_PORT, PN_SERVER_PATH, "");
+  socket.onEvent(onSocket);
+  socket.setReconnectInterval(3000);
 }
 
-Peer* peerFor(uint16_t connHandle) {
-  for (auto& p : peers)
-    if (p.used && p.incoming && p.connHandle == connHandle) return &p;
-  return nullptr;
-}
+// MARK: Finding the session
 
-bool known(const NimBLEAddress& address) {
-  for (auto& p : peers)
-    if (p.used && p.address == address) return true;
-  for (auto& a : ignored)
-    if (a == address) return true;
-  return false;
-}
+// The sessions advertised during one scan, and the strongest signal for each.
+struct Sighting {
+  String session;
+  int rssi;
+};
+std::vector<Sighting> sightings;
+NimBLEAddress unnamed;  // advertising the service without a name: read its Session characteristic
+volatile bool haveUnnamed = false;
+portMUX_TYPE sightingsLock = portMUX_INITIALIZER_UNLOCKED;  // filled in by the Bluetooth task
 
-int uint16At(const uint8_t* data, int offset) { return data[offset] | data[offset + 1] << 8; }
-
-void readInfo(Peer& p, const uint8_t* data, size_t length) {
-  if (length < 12) return;
-  memcpy(p.id, data, 8);
-  p.id[8] = 0;
-  p.width = uint16At(data, 8);
-  p.height = uint16At(data, 10);
-}
-
-// MARK: Sharing this device
-
-// Link timing for every connection: 30-60 ms between radio slots, and 5 s without contact
-// before a link is given up (the default is shorter), since the one radio is shared between
-// advertising, scanning and up to four links. These are within iOS's accessory guidelines.
-const uint16_t MIN_INTERVAL = 24, MAX_INTERVAL = 48;  // in 1.25 ms units
-const uint16_t SUPERVISION_TIMEOUT = 500;             // in 10 ms units
-
-class ServerCallbacks : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer* server, ble_gap_conn_desc* desc) override {
-    server->updateConnParams(desc->conn_handle, MIN_INTERVAL, MAX_INTERVAL, 0, SUPERVISION_TIMEOUT);
-    if (Peer* p = claimPeer()) {
-      p->incoming = true;
-      p->connHandle = desc->conn_handle;
-      p->address = NimBLEAddress(desc->peer_ota_addr);
+void sighted(const String& session, int rssi) {
+  taskENTER_CRITICAL(&sightingsLock);
+  bool seen = false;
+  for (auto& s : sightings)
+    if (s.session == session) {
+      s.rssi = max(s.rssi, rssi);
+      seen = true;
     }
-    // Advertising stops when something connects; keep going so the others can connect too.
-    NimBLEDevice::startAdvertising();
-  }
-
-  void onDisconnect(NimBLEServer*, ble_gap_conn_desc* desc) override {
-    if (Peer* p = peerFor(desc->conn_handle)) p->disconnected = true;  // tidied up in the main loop
-  }
-};
-
-class MessageCallbacks : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic*) override { flashUntil = millis() + 150; }
-};
-
-class ReportCallbacks : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic* characteristic, ble_gap_conn_desc* desc) override {
-    Peer* p = peerFor(desc->conn_handle);
-    NimBLEAttValue value = characteristic->getValue();
-    if (!p || value.length() < 14) return;
-    readInfo(*p, value.data(), value.length());
-    p->bearing = uint16At(value.data(), 12);
-  }
-};
-
-void setInfo() {
-  uint8_t info[12];
-  memcpy(info, clientId, 8);
-  info[8] = info[10] = SCREEN_POINTS & 0xff;
-  info[9] = info[11] = SCREEN_POINTS >> 8;
-  infoChar->setValue(info, sizeof(info));
+  if (!seen && sightings.size() < 8) sightings.push_back({session, rssi});
+  taskEXIT_CRITICAL(&sightingsLock);
 }
-
-void setupServer() {
-  NimBLEServer* server = NimBLEDevice::createServer();
-  server->setCallbacks(new ServerCallbacks());
-
-  NimBLEService* magnetometer = server->createService(MAGNETOMETER_SERVICE);
-  bearingChar = magnetometer->createCharacteristic(BEARING_CHARACTERISTIC, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-  uint8_t zero[2] = {0, 0};
-  bearingChar->setValue(zero, 2);
-  magnetometer->start();
-
-  NimBLEService* pointsNorth = server->createService(POINTS_NORTH_SERVICE);
-  infoChar = pointsNorth->createCharacteristic(INFO_CHARACTERISTIC, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-  setInfo();
-  pointsNorth->createCharacteristic(MESSAGE_CHARACTERISTIC, NIMBLE_PROPERTY::WRITE)->setCallbacks(new MessageCallbacks());
-  pointsNorth->createCharacteristic(REPORT_CHARACTERISTIC, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR)
-      ->setCallbacks(new ReportCallbacks());
-  outboxChar = pointsNorth->createCharacteristic(OUTBOX_CHARACTERISTIC, NIMBLE_PROPERTY::NOTIFY);
-  pointsNorth->start();
-
-  // The service UUID and the name don't both fit, so the name goes in the scan response.
-  // The compass page's picker filters on the "BBC micro:bit" prefix.
-  NimBLEAdvertisementData data, response;
-  data.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP);
-  data.setCompleteServices(NimBLEUUID(MAGNETOMETER_SERVICE));
-  response.setName("BBC micro:bit [atom]");
-  NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
-  advertising->setScanResponse(true);
-  advertising->setAdvertisementData(data);
-  advertising->setScanResponseData(response);
-  advertising->start();
-}
-
-// This device's details for another Atom's Report characteristic.
-void sendReports() {
-  uint8_t report[14];
-  memcpy(report, clientId, 8);
-  report[8] = report[10] = SCREEN_POINTS & 0xff;
-  report[9] = report[11] = SCREEN_POINTS >> 8;
-  report[12] = bearing & 0xff;
-  report[13] = bearing >> 8;
-  for (auto& p : peers)
-    if (p.used && !p.incoming && p.report) p.report->writeValue(report, sizeof(report), false);
-}
-
-// MARK: Finding the other devices
 
 class ScanCallbacks : public NimBLEAdvertisedDeviceCallbacks {
   void onResult(NimBLEAdvertisedDevice* device) override {
-    if (!found && device->isAdvertisingService(NimBLEUUID(MAGNETOMETER_SERVICE))) {
-      foundAddress = device->getAddress();
-      found = true;
+    std::string name = device->getName();
+    if (name.rfind("PN ", 0) == 0 && name.size() > 3) {
+      sighted(String(name.c_str() + 3), device->getRSSI());
+    } else if (device->isAdvertisingService(NimBLEUUID(POINTS_NORTH_SERVICE)) && !haveUnnamed) {
+      unnamed = device->getAddress();
+      haveUnnamed = true;
     }
   }
 };
 
-class ClientCallbacks : public NimBLEClientCallbacks {
-  void onDisconnect(NimBLEClient* client) override {
-    if (Peer* p = peerFor(client)) p->disconnected = true;  // tidied up in the main loop
-  }
-};
-ClientCallbacks clientCallbacks;
-
-void onNotify(NimBLERemoteCharacteristic* characteristic, uint8_t* data, size_t length, bool) {
-  Peer* p = peerFor(characteristic->getRemoteService()->getClient());
-  if (!p) return;
-  NimBLEUUID uuid = characteristic->getUUID();
-  if (uuid == NimBLEUUID(BEARING_CHARACTERISTIC) && length >= 2) p->bearing = uint16At(data, 0);
-  else if (uuid == NimBLEUUID(INFO_CHARACTERISTIC)) readInfo(*p, data, length);
-  else if (uuid == NimBLEUUID(OUTBOX_CHARACTERISTIC) && length >= 16 && memcmp(data, clientId, 8) == 0)
-    flashUntil = millis() + 150;
-}
-
-void connectTo(const NimBLEAddress& address) {
+void readUnnamed() {
   NimBLEClient* client = NimBLEDevice::createClient();
-  client->setClientCallbacks(&clientCallbacks, false);
   client->setConnectTimeout(5);
-  client->setConnectionParams(MIN_INTERVAL, MAX_INTERVAL, 0, SUPERVISION_TIMEOUT);
-  if (!client->connect(address)) {
-    NimBLEDevice::deleteClient(client);
-    return;
+  if (client->connect(unnamed)) {
+    if (NimBLERemoteService* service = client->getService(POINTS_NORTH_SERVICE))
+      if (NimBLERemoteCharacteristic* session = service->getCharacteristic(SESSION_CHARACTERISTIC)) {
+        std::string value = session->readValue();
+        if (!value.empty()) sighted(String(value.c_str()), client->getRssi());
+      }
+    client->disconnect();
   }
-  NimBLERemoteService* magnetometer = client->getService(MAGNETOMETER_SERVICE);
-  NimBLERemoteService* pointsNorth = client->getService(POINTS_NORTH_SERVICE);
-  NimBLERemoteCharacteristic* bearing = magnetometer ? magnetometer->getCharacteristic(BEARING_CHARACTERISTIC) : nullptr;
-  NimBLERemoteCharacteristic* info = pointsNorth ? pointsNorth->getCharacteristic(INFO_CHARACTERISTIC) : nullptr;
-  NimBLERemoteCharacteristic* message = pointsNorth ? pointsNorth->getCharacteristic(MESSAGE_CHARACTERISTIC) : nullptr;
-  Peer* p = (bearing && info && message) ? claimPeer() : nullptr;
-  if (!p) {
-    // Not playing: remember it so it isn't connected to again.
-    if (!(bearing && info && message) && ignored.size() < 16) ignored.push_back(address);
-    NimBLEDevice::deleteClient(client);
-    return;
-  }
-
-  p->address = address;
-  p->client = client;
-  p->message = message;
-  p->report = pointsNorth->getCharacteristic(REPORT_CHARACTERISTIC);
-  NimBLEAttValue value = info->readValue();
-  readInfo(*p, value.data(), value.length());
-  value = bearing->readValue();
-  if (value.length() >= 2) p->bearing = uint16At(value.data(), 0);
-  info->subscribe(true, onNotify);
-  bearing->subscribe(true, onNotify);
-  if (NimBLERemoteCharacteristic* outbox = pointsNorth->getCharacteristic(OUTBOX_CHARACTERISTIC)) outbox->subscribe(true, onNotify);
-  sendReports();
+  NimBLEDevice::deleteClient(client);
 }
 
-void tidyPeers() {
-  for (auto& p : peers)
-    if (p.used && p.disconnected) {
-      if (!p.incoming) NimBLEDevice::deleteClient(p.client);
-      p.used = false;
+// After each scan: stay in the session if it's still advertised nearby, else join the
+// strongest one. Changing session means reconnecting, so the relay tells the old one we've gone.
+void chooseSession() {
+  taskENTER_CRITICAL(&sightingsLock);
+  std::vector<Sighting> seen = sightings;
+  sightings.clear();
+  taskEXIT_CRITICAL(&sightingsLock);
+  const Sighting* best = nullptr;
+  for (auto& s : seen) {
+    if (s.session == sessionId) return;
+    if (!best || s.rssi > best->rssi) best = &s;
+  }
+  if (!best) return;
+  sessionId = best->session;
+  Serial.printf("Joining session %s\n", sessionId.c_str());
+  if (online) socket.disconnect();  // reconnects by itself, then sends client_info
+}
+
+// A 2 s scan every 10 s (every 3 s until there's a session).
+void scanForSessions() {
+  NimBLEScan* scan = NimBLEDevice::getScan();
+  static uint32_t lastScan = 0;
+  static bool scanning = false;
+  if (scanning && !scan->isScanning()) {
+    scanning = false;
+    if (haveUnnamed) {
+      readUnnamed();
+      haveUnnamed = false;
     }
+    chooseSession();
+  }
+  if (!scanning && (lastScan == 0 || millis() - lastScan > (sessionId.isEmpty() ? 3000 : 10000))) {
+    lastScan = millis();
+    scan->clearResults();  // only while stopped: clearing a running scan corrupts the heap
+    scan->start(2, nullptr, false);
+    scanning = true;
+  }
 }
 
 // MARK: Compass
@@ -314,47 +279,53 @@ bool readCompass(int& result) {
 
 // MARK: The ring
 
-// A device round the table, this one included.
+// A device in the session, this one included.
 struct Device {
   const char* id;
-  int bearing, width, height;
-  bool isSelf;
+  float bearing, width, height;
+  bool hub, isSelf;
 };
 
-// Every device with a known bearing, this one included, in bearing order. An iPhone changes its
-// Bluetooth address every so often, so the same device can turn up twice: it's listed once.
+// Every device with a known bearing, this one included.
 std::vector<Device> devices() {
   std::vector<Device> list;
-  if (bearing >= 0) list.push_back({clientId, bearing, SCREEN_POINTS, SCREEN_POINTS, true});
-  for (auto& p : peers) {
-    if (!p.used || p.bearing < 0 || !p.id[0]) continue;
-    bool listed = false;
-    for (auto& d : list) listed |= strcmp(d.id, p.id) == 0;
-    if (!listed) list.push_back({p.id, p.bearing, p.width, p.height, false});
-  }
-  std::sort(list.begin(), list.end(), [](const Device& a, const Device& b) { return a.bearing < b.bearing; });
+  if (bearing >= 0) list.push_back({clientId, (float)bearing, SIZE_POINTS, SIZE_POINTS, false, true});
+  for (auto& p : peers)
+    if (p.used && p.bearing >= 0) list.push_back({p.id, p.bearing, p.width, p.height, p.hub, false});
   return list;
 }
 
-// Message the device `offset` places round the circle (in bearing order) from this one.
+// Message the device `offset` places round the circle (in bearing order) from this one: devices
+// sit opposite where they point, so -1 is on your right and +1 on your left. Hubs sit in the
+// middle, so they're not counted.
 void sendToNeighbour(const char* text, int offset) {
-  auto list = devices();
+  std::vector<Device> list;
+  for (auto& d : devices())
+    if (!d.hub) list.push_back(d);
+  std::sort(list.begin(), list.end(), [](const Device& a, const Device& b) { return a.bearing < b.bearing; });
   int n = list.size(), i = 0;
   while (i < n && !list[i].isSelf) i++;
   if (n < 2 || i == n) return;
-  const char* target = list[((i + offset) % n + n) % n].id;
-  for (auto& p : peers) {
-    if (!p.used || strcmp(p.id, target) != 0) continue;
-    if (p.incoming) {
-      std::string message = std::string(target) + clientId + text;
-      outboxChar->setValue((const uint8_t*)message.data(), message.size());
-      outboxChar->notify();
-    } else {
-      std::string message = std::string(clientId) + text;
-      p.message->writeValue((const uint8_t*)message.data(), message.size(), true);
-    }
-    return;
+  JsonDocument message;
+  message["type"] = "message";
+  message["text"] = text;
+  message["targetClientId"] = list[((i + offset) % n + n) % n].id;
+  send(message);
+}
+
+// A device's screen outline, w by h either side of (0, -offset) in a frame turned by `angle`
+// degrees clockwise about the centre of the screen.
+void drawOutline(float cx, float cy, float angle, float w, float h, float offset) {
+  float a = angle * PI / 180, s = sin(a), c = cos(a);
+  float corners[4][2] = {{-w, -offset - h}, {w, -offset - h}, {w, -offset + h}, {-w, -offset + h}};
+  int px[4], py[4];
+  for (int k = 0; k < 4; k++) {
+    px[k] = lround(cx + corners[k][0] * c - corners[k][1] * s);
+    py[k] = lround(cy + corners[k][0] * s + corners[k][1] * c);
   }
+  canvas.fillTriangle(px[0], py[0], px[1], py[1], px[2], py[2], TFT_BLACK);
+  canvas.fillTriangle(px[0], py[0], px[2], py[2], px[3], py[3], TFT_BLACK);
+  for (int k = 0; k < 4; k++) canvas.drawLine(px[k], py[k], px[(k + 1) % 4], py[(k + 1) % 4], TFT_WHITE);
 }
 
 void draw() {
@@ -367,31 +338,40 @@ void draw() {
   float inner = canvas.width() * 0.3 / sqrt(2), outer = inner * 2, margin = outer - inner;
   canvas.fillSprite(TFT_BLACK);
   canvas.drawCircle(cx, cy, outer, TFT_WHITE);
+
+  // What it's waiting for, in the middle, until it's in a session.
+  canvas.setTextDatum(middle_center);
+  canvas.setTextColor(TFT_DARKGREY);
+  if (wifi.getConfigPortalActive()) {
+    canvas.drawString("WiFi setup:", cx, cy - 6);
+    canvas.drawString(portalName, cx, cy + 6);
+  } else if (const char* state = !WiFi.isConnected() ? "WiFi" : sessionId.isEmpty() ? "session?" : !online ? "server?" : nullptr) {
+    canvas.drawString(state, cx, cy);
+  }
+
   if (bearing >= 0) {
     // Dotted north line between the inner circle and the edge.
     float t = -bearing * PI / 180;
     for (float r = inner; r <= outer; r += 3) canvas.drawPixel(cx + r * sin(t), cy - r * cos(t), TFT_WHITE);
 
-    // Each device's screen outline, on the opposite side of the table from where it points.
     for (auto& d : devices()) {
-      float a = (d.bearing - bearing + 180) * PI / 180, s = sin(a), c = cos(a);
-      float scale = min(0.15f, margin * 0.9f / max(d.width, d.height));
-      float w = d.width * scale / 2, h = d.height * scale / 2, rc = inner + margin * 0.25 + h;
-      float corners[4][2] = {{-w, -rc - h}, {w, -rc - h}, {w, -rc + h}, {-w, -rc + h}};
-      int px[4], py[4];
-      for (int k = 0; k < 4; k++) {
-        px[k] = lround(cx + corners[k][0] * c - corners[k][1] * s);
-        py[k] = lround(cy + corners[k][0] * s + corners[k][1] * c);
+      if (d.hub) {
+        // In the middle, turned to its bearing, its corners inside the inner circle.
+        float scale = inner * 2 * 0.95 / hypot(d.width, d.height);
+        drawOutline(cx, cy, d.bearing - bearing, d.width * scale / 2, d.height * scale / 2, 0);
+      } else {
+        // On the opposite side of the table from where it points.
+        float scale = min(0.15f, margin * 0.9f / max(d.width, d.height));
+        float h = d.height * scale / 2;
+        drawOutline(cx, cy, d.bearing - bearing + 180, d.width * scale / 2, h, inner + margin * 0.25 + h);
       }
-      canvas.fillTriangle(px[0], py[0], px[1], py[1], px[2], py[2], TFT_BLACK);
-      canvas.fillTriangle(px[0], py[0], px[2], py[2], px[3], py[3], TFT_BLACK);
-      for (int k = 0; k < 4; k++) canvas.drawLine(px[k], py[k], px[(k + 1) % 4], py[(k + 1) % 4], TFT_WHITE);
     }
   }
   canvas.pushSprite(0, 0);
 }
 
 void setup() {
+  Serial.begin(115200);  // for the status line, and WiFiManager's own messages
   M5.begin();
   canvas.createSprite(M5.Display.width(), M5.Display.height());
   setupCompass();
@@ -399,53 +379,58 @@ void setup() {
   for (int i = 0; i < 8; i++) clientId[i] = chars[esp_random() % 36];
   clientId[8] = 0;
 
-  NimBLEDevice::init("BBC micro:bit [atom]");
-  setupServer();
+  // Joins the network it was given last time, or opens the setup portal, without waiting for
+  // either: wifi.process() in the loop runs the portal.
+  WiFi.mode(WIFI_STA);
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  snprintf(portalName, sizeof(portalName), "PN-Atom-%02x%02x", mac[4], mac[5]);
+  if (M5.BtnA.isPressed()) wifi.resetSettings();
+  wifi.setConfigPortalBlocking(false);
+  wifi.autoConnect(portalName);
+
+  NimBLEDevice::init("");
   NimBLEScan* scan = NimBLEDevice::getScan();
   scan->setAdvertisedDeviceCallbacks(new ScanCallbacks(), false);
-  // Listen for 30 ms in every 160, leaving the radio free for the links most of the time.
+  scan->setActiveScan(true);  // iOS puts the name in the scan response
+  // Listen for 30 ms in every 160, leaving the radio (shared with WiFi) free most of the time.
   scan->setInterval(160);
   scan->setWindow(30);
 }
 
 void loop() {
   M5.update();
-  if (M5.BtnA.wasClicked()) sendToNeighbour("Swiped!", 1);
-  if (M5.BtnA.wasHold()) sendToNeighbour("Swiped!", -1);
+  wifi.process();
+  if (M5.BtnA.wasClicked()) sendToNeighbour("Swiped!", -1);
+  if (M5.BtnA.wasHold()) sendToNeighbour("Swiped!", 1);
 
-  // Only pass on changes of 2 degrees or more, so the bearing doesn't flicker between two values.
+  // Only pass on changes of 2 degrees or more, so the bearing doesn't flicker between two
+  // values, and at most five times a second.
+  static uint32_t lastSent = 0;
   int value;
-  if (readCompass(value) && (bearing < 0 || abs((value - bearing + 540) % 360 - 180) >= 2)) {
+  if (readCompass(value) && (bearing < 0 || abs((value - bearing + 540) % 360 - 180) >= 2) && millis() - lastSent > 200) {
     bearing = value;
-    uint8_t data[2] = {(uint8_t)(value & 0xff), (uint8_t)(value >> 8)};
-    bearingChar->setValue(data, 2);
-    bearingChar->notify();
-    sendReports();
+    lastSent = millis();
+    if (online) sendInfo("compass");
+  }
+
+  static bool started = false;
+  if (!started && WiFi.isConnected() && !sessionId.isEmpty()) {
+    started = true;
+    connectSocket();
+  }
+  if (started) socket.loop();
+
+  // A status line every 2 s on the serial port.
+  static uint32_t lastLog = 0;
+  if (millis() - lastLog > 2000) {
+    lastLog = millis();
+    Serial.printf("wifi=%d portal=%d session=%s server=%d bearing=%d\n", WiFi.isConnected(), wifi.getConfigPortalActive(),
+                  sessionId.isEmpty() ? "-" : sessionId.c_str(), online, bearing);
   }
 
   saveCompass();
-  tidyPeers();
-  NimBLEScan* scan = NimBLEDevice::getScan();
-  if (found) {
-    NimBLEAddress address = foundAddress;
-    found = false;
-    if (!known(address)) {
-      scan->stop();
-      connectTo(address);
-    }
-  }
-  bool room = false;
-  for (auto& p : peers) room |= !p.used;
-  // A 1 s scan every 5 s, so a device that went away and came back is reported again, without
-  // starving the links. Results are only cleared while the scan is stopped: clearing them
-  // while it runs races the Bluetooth task and corrupts the heap.
-  static uint32_t lastScan = 0;
-  if (room && !scan->isScanning() && millis() - lastScan > 5000) {
-    lastScan = millis();
-    scan->clearResults();
-    scan->start(1, nullptr, false);
-  }
-
+  scanForSessions();
   draw();
-  delay(30);
+  delay(20);
 }
