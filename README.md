@@ -33,7 +33,7 @@ The old `compass.html` address redirects to `compass/`.
 - `ios/PointsNorth.swift`: a single-file SwiftUI app for iPhone and iPad, set up in Xcode like the iPhone app above, plus "Privacy - Camera Usage Description". It starts a session of its own, with its QR code in the middle; **JOIN** scans another device's QR code (the web app's too), and **SERVER:** under the role shows whether it can reach the relay (connecting, online or offline). **SPOKE | HUB** at the top picks its role:
   - **SPOKE**: a device in the session like any other.
   - **HUB**: also bridges micro:bits running this repo's firmware, which only speak Bluetooth. It connects to every micro:bit nearby and gives each its own WebSocket, so to everyone else a micro:bit is just another device (drawn to the micro:bit's size). The hub smooths each micro:bit's bearing as the Atom does its own (settling in about a second, passed on in steps of 2° or more, at most five times a second). Tap a micro:bit to light all its LEDs; its A and B buttons send the same message as a swipe, A to its left neighbour and B to its right. The micro:bit firmware is unchanged.
-- `atoms3r-pointsnorth/`: a PlatformIO project for the AtomS3R, a spoke over WiFi. The first time it starts (or if you hold its button while it starts), it opens a WiFi network of its own, `PN-Atom-xxxx`, named on its screen: join it from a phone and pick your network in the page that opens. It has no camera, so it joins the session the iOS apps nearby advertise over Bluetooth, staying in its session while anything nearby still advertises it and otherwise moving to the strongest. Until then the middle of its ring says what it's waiting for (`WiFi`, `session?` or `server?`). Click its button to message the device on your right, hold for your left. Its heading is smoothed (it settles in about a second) and only changes in steps of 2° or more. It uses M5Unified's magnetometer calibration, saved to flash once a minute when it changes: turn it slowly through every direction once, then leave it running for a minute.
+- `atoms3r-pointsnorth/`: a PlatformIO project for the AtomS3R, a spoke over WiFi. The first time it starts (or if you hold its button while it starts), it opens a WiFi network of its own, `PN-Atom-xxxx`, named on its screen: join it from a phone and pick your network in the page that opens. It has no camera, so it joins the session the iOS apps nearby advertise over Bluetooth, staying in its session while anything nearby still advertises it and otherwise moving to the strongest. Until then the middle of its ring says what it's waiting for (`WiFi`, `session?` or `server?`), and its serial port prints a status line every 2 seconds, plus each message it receives. Click its button to message the device on your right, hold for your left. Its heading is smoothed (it settles in about a second) and only changes in steps of 2° or more. It uses M5Unified's magnetometer calibration, saved to flash once a minute when it changes: turn it slowly through every direction once, then leave it running for a minute.
 
 ### Hubs
 
@@ -41,11 +41,19 @@ A hub says so in its `client_info` and `compass` messages (`"role": "hub"`; ever
 
 ### Messages
 
-The original's JSON messages, each with `clientId` and `sessionId`: `client_info` (`width`, `height`, `bearing`, and now `role`; answered by everyone with their own, sent to the newcomer's `targetClientId`), `compass` (the same fields, whenever the bearing changes), `message` (`text`, to a `targetClientId`) and `disconnect` (sent by the relay when a socket closes). The relay delivers a message with a `targetClientId` to the socket that last used that client ID, which is why each bridged micro:bit needs a socket of its own.
+The original's JSON messages, each with `clientId` and `sessionId`: `client_info` (`width`, `height`, `bearing`, and now `role`; answered by everyone with their own, sent to the newcomer's `targetClientId`), `compass` (the same fields, whenever the bearing changes), `message` (`text`, to a `targetClientId`) and `disconnect` (sent by the relay when a socket closes). The relay remembers the last client ID each socket used, and delivers a message with a `targetClientId` to the first socket in the session with that ID. That's why each bridged micro:bit needs a socket of its own.
 
 ### Session over Bluetooth
 
 The iOS app, as hub or spoke, advertises the name `PN <session ID>` with the Points North Service `00E43092-366D-46DA-8323-42BF39B7078E`, whose Session characteristic `7513CE11-F0CA-49FC-A8BF-E9D4F8021FA3` holds the session ID as UTF-8, in case a scanner doesn't get the name. iOS only advertises while the app is open on screen.
+
+### Known issues
+
+- **A micro:bit's buttons need firmware from commit 49092e3 or later**, which added the Button Service. On an older micro:bit the hub never hears a press, and nothing says so. Reflash it from the flasher page, then turn Bluetooth off and on on the iPad so it doesn't keep the old list of services.
+- **A micro:bit whose compass isn't calibrated has no bearing**, so it's in the session but isn't drawn, and its buttons do nothing.
+- **The relay never pings its sockets**, so a socket left open by a killed or suspended app stays in its session. Because a micro:bit keeps its client ID each time it's bridged, a stale socket could take messages meant for it.
+- **The micro:bit V1.5 hangs on button presses while bridged**, showing two lit LEDs: [#1](https://github.com/davidchatting-bot/microbit-compass-ble/issues/1).
+- After updating the web app, a phone may keep running its cached script until the tab is refreshed.
 
 ## Bluetooth
 
