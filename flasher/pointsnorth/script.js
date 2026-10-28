@@ -802,15 +802,16 @@ function draw() {
 
   // after translate(layout.cx, layout.cy); and after drawing the ring, draw the QR:
   // (place this where you want the QR centered inside the compass)
-  // with a hub in the centre, the QR sits on the hub's screen instead
+  // with a hub in the centre, the QR sits on the hub's screen instead: upright, and as big as
+  // fits inside the hub's outline at its current angle
   if (qrP5Image) {
     const hub = firstHub();
     let qrSize = layout.qrDrawSize;
     push();
       if (hub) {
         const { w, h, s } = hubScale(hub, layout);
-        rotate(radians(hub.bearing - (Number.isFinite(currentBearing) ? currentBearing : 0)));
-        qrSize = Math.min(w, h) * s * 0.7;
+        const t = radians(hub.bearing - (Number.isFinite(currentBearing) ? currentBearing : 0));
+        qrSize = Math.min(w, h) * s * 0.8 / (Math.abs(Math.cos(t)) + Math.abs(Math.sin(t)));
       }
       imageMode(CENTER);
       noSmooth();               // keep QR sharp
