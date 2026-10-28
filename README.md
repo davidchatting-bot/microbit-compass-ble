@@ -8,6 +8,7 @@ Every device joins a session through the original's WebSocket relay (`wss://api.
 |---|---|---|
 | Phone, tablet or laptop browser | `web/` | Over the internet, by scanning a session's QR code |
 | iPhone or iPad | `ios/PointsNorth.swift` | Over the internet, by scanning a QR code; as a **hub**, it also bridges micro:bits |
+| Android phone or tablet (untested) | `android/` | As the iOS app |
 | AtomS3R | `atoms3r/` | Over WiFi, joining the session iOS apps nearby advertise over Bluetooth |
 | micro:bit V1 or V2 | `main.ts` | Over Bluetooth, through an iOS hub |
 | The relay | `server/` | |
@@ -39,6 +40,12 @@ It starts a session of its own, with its QR code in the middle; **JOIN** scans a
 - **HUB**: also bridges micro:bits, which only speak Bluetooth. It connects to every micro:bit nearby and gives each its own WebSocket, so to everyone else a micro:bit is just another device (drawn to the micro:bit's size). It smooths each micro:bit's bearing (settling in about a second, passed on in steps of 2° or more, at most five times a second), turns its A and B presses into swipes, and lights its LEDs when it's messaged.
 
 As a hub or a spoke, it advertises its session over Bluetooth for the Atom. iOS only advertises while the app is open on screen, so it keeps the screen awake.
+
+## Android app
+
+`android/` is the iOS app ported to Kotlin and Jetpack Compose, untested: it has never been built ([#6](https://github.com/davidchatting-bot/pointsnorth/issues/6)). Open the folder in Android Studio, let it sync, and run it on a phone or tablet with Bluetooth LE and a compass (Android 8 or later). It asks for Bluetooth permission (location on Android 11 and earlier). JOIN uses Google's code scanner, which runs in Play services, so the app needs no camera permission but does need Play services. There's no Gradle wrapper script: Android Studio doesn't need one, and `gradle wrapper` in the folder makes one for building from the command line.
+
+It does everything the iOS app does, with one difference: Android can't choose the name it advertises, so it can't advertise `PN <session ID>`. It advertises the Points North Service with its Session characteristic, which the Atom reads when it sees the service without the name, and also puts the session ID in its scan response as the service's data.
 
 ## AtomS3R
 
@@ -128,7 +135,7 @@ npm run build   # main.ts -> built/binary.hex (MakeCode cloud compiler, needs in
 npm run serve   # WebUSB needs localhost or HTTPS
 ```
 
-Pushing to `main` runs the same build in GitHub Actions and deploys `_site/` to GitHub Pages: Points North at the root, the flasher at `flasher/` and the compass page at `compass/`. The iOS apps build in Xcode, the Atom project with PlatformIO, and the relay needs only Node.
+Pushing to `main` runs the same build in GitHub Actions and deploys `_site/` to GitHub Pages: Points North at the root, the flasher at `flasher/` and the compass page at `compass/`. The iOS apps build in Xcode, the Android app in Android Studio, the Atom project with PlatformIO, and the relay needs only Node.
 
 ## Credits
 
